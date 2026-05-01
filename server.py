@@ -1,23 +1,28 @@
 from fastmcp import FastMCP
 import chromadb
+from chromadb.config import Settings
 import os
 import uuid
 
-# Sunucumuzu başlatalım
+# Sunucuyu 'localmind' kimliğiyle başlat
 mcp = FastMCP("localmind-Core")
 
-# ChromaDB Vektör Veritabanı Kurulumu (Yerel ve Şifreli Disk İçin)
-# Veriler proje dizini içindeki 'chroma_db' klasöründe saklanacak
+# Veritabanı Yolu
 DB_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
-chroma_client = chromadb.PersistentClient(path=DB_PATH)
 
-# Zihin Sarayı Koleksiyonunu (Tablosunu) al veya oluştur
+# TELEMETRİ KAPALI: Tam gizlilik (Forensic) ve yerel izolasyon.
+chroma_client = chromadb.PersistentClient(
+    path=DB_PATH,
+    settings=Settings(anonymized_telemetry=False)
+)
+
+# Zihin Sarayı Koleksiyonu
 palace = chroma_client.get_or_create_collection(name="zihin_sarayi")
 
 @mcp.tool()
 def hafizaya_yaz(konu: str, bilgi: str, oda: str = "genel") -> str:
     """
-    Yapay zekanın önemli kararları ve sistem mimarilerini kalıcı olarak xPalace'a kaydetmesini sağlar.
+    Yapay zekanın önemli kararları ve sistem mimarilerini kalıcı olarak localmind'a kaydetmesini sağlar.
     
     Argümanlar:
     - konu: Hatırlanması gereken bilginin başlığı (Örn: 'Tailscale Kararı')
@@ -60,6 +65,6 @@ def hafizada_ara(sorgu: str, sonuc_sayisi: int = 2) -> str:
     return cevap
 
 if __name__ == "__main__":
-    # Sunucuyu standart input/output üzerinden çalıştır
-    # Bu sayede IDE'ler (Antigravity, Cursor) sunucuya gecikmesiz bağlanabilir
-    mcp.run(transport="stdio", show_banner=False)
+    # Ağ üzerinden (SSE) yayına başla. 
+    # 0.0.0.0 seçildi çünkü Tailscale arayüzünden de erişilmesini istiyoruz.
+    mcp.run(transport="sse", host="0.0.0.0", port=8000)
