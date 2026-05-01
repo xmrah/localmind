@@ -36,8 +36,9 @@
             # Sanal ortamı otomatik aktif et
             source .venv/bin/activate
             
-            echo "🏰 xPalace (NixOS Forensic Edition) Geliştirme Ortamına Hoş Geldin!"
-            echo "👉 Gerekli paketleri kurmak için: pip install fastmcp chromadb"
+            # Hoş geldin mesajı (Sadece stderr üzerinden gösterilecek)
+            echo "🏰 xPalace (NixOS Forensic Edition) Geliştirme Ortamına Hoş Geldin!" >&2
+            echo "👉 Gerekli paketleri kurmak için: pip install fastmcp chromadb" >&2
           '';
         };
       }
