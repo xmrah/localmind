@@ -37,7 +37,7 @@
             source .venv/bin/activate
             
             # Hoş geldin mesajı (Sadece stderr üzerinden gösterilecek)
-            echo "🏰 xPalace (NixOS Forensic Edition) Geliştirme Ortamına Hoş Geldin!" >&2
+            echo "🧠 localmind (NixOS Forensic Edition) Geliştirme Ortamına Hoş Geldin!" >&2
             echo "👉 Gerekli paketleri kurmak için: pip install fastmcp chromadb" >&2
           '';
         };

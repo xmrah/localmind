@@ -4,7 +4,7 @@ import os
 import uuid
 
 # Sunucumuzu başlatalım
-mcp = FastMCP("xPalace-Core")
+mcp = FastMCP("localmind-Core")
 
 # ChromaDB Vektör Veritabanı Kurulumu (Yerel ve Şifreli Disk İçin)
 # Veriler proje dizini içindeki 'chroma_db' klasöründe saklanacak
@@ -62,4 +62,4 @@ def hafizada_ara(sorgu: str, sonuc_sayisi: int = 2) -> str:
 if __name__ == "__main__":
     # Sunucuyu standart input/output üzerinden çalıştır
     # Bu sayede IDE'ler (Antigravity, Cursor) sunucuya gecikmesiz bağlanabilir
-    mcp.run(transport="stdio")
+    mcp.run(transport="stdio", show_banner=False)
