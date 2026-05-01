@@ -14,9 +14,9 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = [
-            pkgs.python311
-            pkgs.python311Packages.pip
-            pkgs.python311Packages.virtualenv
+            pkgs.python3
+            pkgs.python3Packages.pip
+            pkgs.python3Packages.virtualenv
             # ChromaDB ve Python C uzantıları için gerekli C kütüphaneleri:
             pkgs.stdenv.cc.cc.lib
             pkgs.zlib
