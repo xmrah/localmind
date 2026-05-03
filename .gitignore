@@ -8,3 +8,5 @@ result-*
 *.sqlite3
 chroma_db/
 .vscode/
+*.db
+chroma_db/
