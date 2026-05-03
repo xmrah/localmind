@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 
-# NixOS ortamında IDE'nin (Antigravity) eksik C++ kütüphanelerini (libstdc++)
-# bulabilmesi için özel olarak hazırlanmış köprü betiğidir.
+# Localmind MCP Server — Antigravity/IDE entegrasyonu için
+# nix print-dev-env KULLANILMIYOR — doğrudan LD_LIBRARY_PATH ile hızlı başlatma
 
 cd /home/xmrah/Projects/localmind
 
-# 1. Nix Flake ortam değişkenlerini yükle (Uyarıları gizleyerek)
-eval "$(nix print-dev-env . 2>/dev/null)"
+# NixOS'ta gerekli C kütüphanelerini ayarla (ChromaDB için)
+NIX_GCC_LIB=$(echo /nix/store/*-gcc-*-lib/lib | tr ' ' '\n' | head -1)
+NIX_ZLIB=$(echo /nix/store/*-zlib-*/lib | tr ' ' '\n' | grep -v src | head -1)
+export LD_LIBRARY_PATH="${NIX_GCC_LIB}:${NIX_ZLIB}"
+export LC_ALL=en_US.UTF-8
+export ANONYMIZED_TELEMETRY=False
 
-# 2. Python sanal ortamını (.venv) aktif et
-source .venv/bin/activate
-
-# 3. FastMCP gereksiz loglarını/ASCII logolarını tamamen sustur
+# FastMCP loglarını sustur
 export FASTMCP_LOG_LEVEL=ERROR
 export LOG_LEVEL=ERROR
 
-# 3. FastMCP sunucusunu başlat
-exec python server.py
+# MCP sunucusunu başlat (stdio)
+exec .venv/bin/python server.py

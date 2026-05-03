@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Localmind | Zihin Sarayı</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <!-- Ambient Particles Canvas -->
+    <canvas id="particles"></canvas>
+
+    <div class="app-container">
+        <header class="main-header">
+            <div class="logo" onclick="navigate('home')">
+                <span class="brain-icon">🧠</span>
+                <span class="brand-text">Localmind</span>
+            </div>
+            <div class="header-actions">
+                <div class="status-indicator">
+                    Status: <span id="pulseStatus" class="status-active">Connecting...</span>
+                </div>
+                <div class="header-stat">
+                    <span id="headerTotal" class="stat-number">0</span> memories
+                </div>
+                <div class="profile">
+                    <div class="avatar">XM</div>
+                    <span class="username">xmrah</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-layout">
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-section">
+                    <h3>MAIN</h3>
+                    <nav>
+                        <a href="#home" class="nav-link active" data-view="home"><span>🏠</span> Home</a>
+                        <a href="#rooms" class="nav-link" data-view="rooms"><span>📁</span> Memory Rooms</a>
+                        <a href="#analytics" class="nav-link" data-view="analytics"><span>📊</span> Analytics</a>
+                        <a href="#settings" class="nav-link" data-view="settings"><span>⚙️</span> Settings</a>
+                    </nav>
+                </div>
+                <div class="sidebar-section" id="sidebarRooms">
+                    <h3>ROOMS</h3>
+                    <nav id="roomNav">
+                        <!-- Dinamik olarak doldurulacak -->
+                    </nav>
+                </div>
+            </aside>
+
+            <main class="content" id="mainContent">
+                <!-- Views buraya inject edilecek -->
+            </main>
+        </div>
+
+        <div id="telemetry"></div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>

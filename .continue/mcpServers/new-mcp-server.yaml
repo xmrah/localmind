@@ -1,0 +1,9 @@
+name: localmind
+version: 1.0.0
+schema: v1
+mcpServers:
+  - name: localmind
+    command: bash
+    args:
+      - /home/xmrah/Projects/localmind/run_mcp.sh
+    env: {}
