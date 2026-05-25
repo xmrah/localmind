@@ -114,8 +114,9 @@ async function router() {
         case "home": await viewHome(el); break;
         case "rooms": await viewRooms(el); break;
         case "room": await viewRoomDetail(el, param); break;
+        case "timeline": viewTimeline(el); break;
         case "analytics": await viewAnalytics(el); break;
-        case "settings": viewSettings(el); break;
+        case "settings": await viewSettings(el); break;
         default: await viewHome(el);
     }
 }
@@ -224,21 +225,191 @@ async function viewRoomDetail(el, roomKey) {
     }).join("");
 }
 
-async function viewAnalytics(el) {
-    const { rooms, total } = parseStatsFromNodes(rawGraph.nodes);
-    el.innerHTML = `<div class="view"><h1 class="section-title">📊 Analitik</h1><div class="analytics-grid">
-        <div class="analytics-card"><h3>ODA DAĞILIMI</h3><div class="bar-chart">${rooms.map(r => `
-            <div class="bar-row"><span class="bar-label">${r.label}</span>
-            <div class="bar-track"><div class="bar-fill" style="width:${(r.count/total)*100}%;background:${r.color}"></div></div>
-            <span class="bar-value">${r.count}</span></div>`).join("")}</div></div>
-    </div></div>`;
+function viewTimeline(el) {
+    const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
+    const sorted = [...memNodes].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Tarihe göre grupla
+    const groups = {};
+    sorted.forEach(n => {
+        const d = n.created_at ? new Date(n.created_at).toLocaleDateString("tr-TR", {day:"numeric",month:"long",year:"numeric"}) : "Bilinmeyen tarih";
+        if (!groups[d]) groups[d] = [];
+        groups[d].push(n);
+    });
+
+    const impBadge = imp => {
+        const v = Number(imp) || 0;
+        if (v >= 9) return `<span class="imp-badge imp-critical">${v}</span>`;
+        if (v >= 7) return `<span class="imp-badge imp-high">${v}</span>`;
+        if (v >= 4) return `<span class="imp-badge imp-med">${v}</span>`;
+        return `<span class="imp-badge imp-low">${v}</span>`;
+    };
+
+    const rows = Object.entries(groups).map(([date, mems]) => `
+        <div class="tl-group">
+            <div class="tl-date">${date}</div>
+            <div class="tl-items">
+                ${mems.map(m => {
+                    const info = getRoomInfo(m.oda || "genel");
+                    const payload = JSON.stringify({label:m.label,oda:m.oda,content:m.content,tags:m.tags,importance:m.importance,created_at:m.created_at}).replace(/'/g,"&#39;");
+                    return `<div class="tl-item" onclick='openMemory(${payload})'>
+                        <div class="tl-dot" style="background:${info.color}"></div>
+                        <div class="tl-body">
+                            <div class="tl-title">${m.label}</div>
+                            <div class="tl-meta">
+                                <span class="tl-room">${info.icon} ${info.label}</span>
+                                ${impBadge(m.importance)}
+                            </div>
+                        </div>
+                    </div>`;
+                }).join("")}
+            </div>
+        </div>`).join("");
+
+    el.innerHTML = `<div class="view">
+        <h1 class="section-title">📅 Hafıza Zaman Çizelgesi</h1>
+        ${sorted.length === 0
+            ? `<div class="empty-state">Henüz kayıtlı anı yok.</div>`
+            : `<div class="timeline">${rows}</div>`}
+    </div>`;
 }
 
-function viewSettings(el) {
-    el.innerHTML = `<div class="view"><h1 class="section-title">⚙️ Ayarlar</h1><div class="settings-group">
-        <div class="setting-row"><span>Sistem</span><span class="setting-value">FastAPI + SSE</span></div>
-        <div class="setting-row"><span>Hafıza</span><span class="setting-value">${rawGraph.nodes.length} Anı</span></div>
-    </div></div>`;
+async function viewAnalytics(el) {
+    const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
+    const { rooms, total } = parseStatsFromNodes(rawGraph.nodes);
+    const linkCount = rawGraph.links.filter(l => {
+        const ids = new Set(memNodes.map(n => n.id));
+        const s = typeof l.source === "object" ? l.source.id : l.source;
+        const t = typeof l.target === "object" ? l.target.id : l.target;
+        return ids.has(s) && ids.has(t);
+    }).length;
+
+    const avgImp = memNodes.length
+        ? (memNodes.reduce((sum, n) => sum + (Number(n.importance) || 0), 0) / memNodes.length).toFixed(1)
+        : 0;
+
+    // Top 5 by importance
+    const top5 = [...memNodes].sort((a, b) => (Number(b.importance)||0) - (Number(a.importance)||0)).slice(0, 5);
+
+    // Importance bands
+    const bands = {low:0, med:0, high:0, critical:0};
+    memNodes.forEach(n => {
+        const v = Number(n.importance) || 0;
+        if (v >= 9) bands.critical++;
+        else if (v >= 7) bands.high++;
+        else if (v >= 4) bands.med++;
+        else bands.low++;
+    });
+    const bandMax = Math.max(...Object.values(bands), 1);
+
+    el.innerHTML = `<div class="view">
+        <h1 class="section-title">📊 Analitik</h1>
+
+        <!-- Özet satırı -->
+        <div class="stats-row">
+            <div class="stat-card"><div class="stat-val">${total}</div><div class="stat-lbl">Toplam Anı</div></div>
+            <div class="stat-card"><div class="stat-val">${rooms.length}</div><div class="stat-lbl">Oda</div></div>
+            <div class="stat-card"><div class="stat-val">${avgImp}</div><div class="stat-lbl">Ort. Önem</div></div>
+            <div class="stat-card"><div class="stat-val">${linkCount}</div><div class="stat-lbl">Bağlantı</div></div>
+        </div>
+
+        <div class="analytics-grid">
+            <!-- Oda dağılımı -->
+            <div class="analytics-card">
+                <h3>ODA DAĞILIMI</h3>
+                <div class="bar-chart">${rooms.map(r => `
+                    <div class="bar-row">
+                        <span class="bar-label">${r.label}</span>
+                        <div class="bar-track"><div class="bar-fill" style="width:${total>0?(r.count/total)*100:0}%;background:${r.color}"></div></div>
+                        <span class="bar-value">${r.count}</span>
+                    </div>`).join("")}
+                </div>
+            </div>
+
+            <!-- Top 5 anı -->
+            <div class="analytics-card">
+                <h3>EN ÖNEMLİ 5 ANI</h3>
+                <div class="top-list">
+                    ${top5.map((m, i) => {
+                        const info = getRoomInfo(m.oda || "genel");
+                        const payload = JSON.stringify({label:m.label,oda:m.oda,content:m.content,tags:m.tags,importance:m.importance,created_at:m.created_at}).replace(/'/g,"&#39;");
+                        return `<div class="top-item" onclick='openMemory(${payload})'>
+                            <span class="top-rank">#${i+1}</span>
+                            <div class="top-info">
+                                <div class="top-title">${m.label}</div>
+                                <div class="top-room">${info.icon} ${info.label}</div>
+                            </div>
+                            <span class="top-imp" style="color:${info.color}">${Number(m.importance)||0}</span>
+                        </div>`;
+                    }).join("")}
+                </div>
+            </div>
+
+            <!-- Önem dağılımı -->
+            <div class="analytics-card">
+                <h3>ÖNEM DAĞILIMI</h3>
+                <div class="bar-chart">
+                    <div class="bar-row"><span class="bar-label imp-label-critical">Kritik 9-10</span><div class="bar-track"><div class="bar-fill" style="width:${(bands.critical/bandMax)*100}%;background:#ef4444"></div></div><span class="bar-value">${bands.critical}</span></div>
+                    <div class="bar-row"><span class="bar-label imp-label-high">Yüksek 7-8</span><div class="bar-track"><div class="bar-fill" style="width:${(bands.high/bandMax)*100}%;background:#f59e0b"></div></div><span class="bar-value">${bands.high}</span></div>
+                    <div class="bar-row"><span class="bar-label imp-label-med">Orta 4-6</span><div class="bar-track"><div class="bar-fill" style="width:${(bands.med/bandMax)*100}%;background:#4d7cff"></div></div><span class="bar-value">${bands.med}</span></div>
+                    <div class="bar-row"><span class="bar-label imp-label-low">Düşük 1-3</span><div class="bar-track"><div class="bar-fill" style="width:${(bands.low/bandMax)*100}%;background:#64748b"></div></div><span class="bar-value">${bands.low}</span></div>
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
+
+async function viewSettings(el) {
+    el.innerHTML = `<div class="view"><h1 class="section-title">⚙️ Ayarlar</h1><div style="color:var(--text-dim);padding:20px">Yükleniyor…</div></div>`;
+    const health = await api("/api/health") || {};
+    const profile = await api("/api/profile") || {};
+
+    el.innerHTML = `<div class="view">
+        <h1 class="section-title">⚙️ Ayarlar</h1>
+
+        <div class="settings-group">
+            <h3>SİSTEM DURUMU</h3>
+            <div class="setting-row">
+                <span class="setting-label">Servis</span>
+                <span class="setting-value ${health.status==='ok' ? 'status-ok' : 'status-err'}">${health.status === 'ok' ? '● Aktif' : '● Hata'}</span>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Ollama</span>
+                <span class="setting-value ${health.ollama ? 'status-ok' : 'status-err'}">${health.ollama ? '● Bağlı' : '● Bağlı değil'}</span>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Versiyon</span>
+                <span class="setting-value">${health.version || '—'}</span>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Son güncelleme</span>
+                <span class="setting-value">${health.timestamp ? new Date(health.timestamp).toLocaleString("tr-TR") : '—'}</span>
+            </div>
+        </div>
+
+        <div class="settings-group">
+            <h3>HAFIZA</h3>
+            <div class="setting-row">
+                <span class="setting-label">Toplam anı</span>
+                <span class="setting-value">${health.memories ?? '—'}</span>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Agent</span>
+                <span class="setting-value">${profile.agent_id || 'default'}</span>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Benzerlik eşiği</span>
+                <span class="setting-value">${THRESHOLD}</span>
+            </div>
+        </div>
+
+        <div class="settings-group">
+            <h3>MCP ARAÇLARI</h3>
+            ${["hafizaya_yaz","hafizada_ara","hafizayi_aktar","oturum_ozetle","gecmise_bak","hatirlat","grafik_sorgula","oda_listele","profil_goster","hafizayi_unut"]
+                .map(t => `<div class="setting-row"><span class="setting-label">${t}</span><span class="setting-value status-ok">● Aktif</span></div>`)
+                .join("")}
+        </div>
+    </div>`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -456,7 +627,6 @@ function renderGraph() {
         }
     }
 
-    updateTelemetry(allNodes.length);
 }
 
 
@@ -491,10 +661,6 @@ function openMemory(data) {
 window.closeDetail = () => document.getElementById("detailPanel")?.classList.remove("active");
 document.addEventListener("keydown", e => { if (e.key === "Escape") window.closeDetail(); });
 
-function updateTelemetry(n) {
-    const el = document.getElementById("telemetry");
-    if (el) el.innerText = `[TELEMETRY]\nSTATUS: ${sseStatus}\nNODES: ${n}/${rawGraph.nodes.length}\nTHRESHOLD: ${THRESHOLD}`;
-}
 
 let _lastTotal = -1;
 const sse = new EventSource("/api/events");
