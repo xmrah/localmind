@@ -212,4 +212,4 @@ Localmind, NixOS üzerinde `systemd` servisi olarak 7/24 çalışır:
 ---
 
 ## 📝 Lisans
-Bu proje kişisel kullanım ve geliştirme amaçlıdır.
+Bu proje [MIT Lisansı](LICENSE) ile lisanslanmıştır.
