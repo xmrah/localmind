@@ -1,28 +1,19 @@
 """
-Localmind v2 — MCP Server (stdio)
-Claude Desktop, Antigravity ve diğer MCP client'lar bu sunucuya bağlanır.
-Yeni MemoryManager üzerinden çalışır — akıllı upsert, otomatik sınıflandırma.
+Localmind MCP SSE Server — Open WebUI entegrasyonu için.
+server.py'daki araçları HTTP/SSE üzerinden sunar.
 """
-import sys, os, asyncio, json, logging
-
-sys.path.insert(0, "/home/xmrah/Projects/localmind")
-os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
-
-import ctypes
-for lib in ["libstdc++.so.6", "libz.so.1"]:
-    try: ctypes.CDLL(lib)
-    except Exception: pass
-
-logging.basicConfig(level=logging.WARNING)
-log = logging.getLogger("localmind.mcp")
-
+import os, sys, asyncio, logging
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
+from mcp.server.sse import SseServerTransport
 from mcp import types
 
-# MemoryManager — lazy yükle
-_manager = None
+# Localmind ana dizinini path'e ekle
+sys.path.insert(0, "/home/xmrah/Projects/localmind")
 
+# MemoryManager'ı server.py ile aynı mantıkta yükle
+_manager = None
 def get_manager():
     global _manager
     if _manager is None:
@@ -30,11 +21,10 @@ def get_manager():
         _manager = MemoryManager()
     return _manager
 
+# MCP Server Tanımı
+app_mcp = Server("localmind-sse")
 
-app = Server("localmind-v2")
-
-
-@app.list_tools()
+@app_mcp.list_tools()
 async def list_tools():
     return [
         types.Tool(
@@ -60,7 +50,7 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "sorgu": {"type": "string", "description": "Arama sorgusu"},
-                    "sonuc_sayisi": {"type": "integer", "description": "Kaç sonuç dönsün (varsayılan: 3)", "default": 3},
+                    "sonuc_sayisi": {"type": "integer", "description": "Kaç sonuç dönsün (varsayılan: 3)"},
                     "oda": {"type": "string", "description": "Belirli bir odada ara (opsiyonel)"}
                 },
                 "required": ["sorgu"]
@@ -89,7 +79,7 @@ async def list_tools():
         ),
         types.Tool(
             name="grafik_sorgula",
-            description="Bir varlığın (kişi, kavram, teknoloji) knowledge graph bağlantılarını sorgula. Örnek: 'NixOS', 'xmrah', 'Hyprland'.",
+            description="Bir varlığın (kişi, kavram, teknoloji) knowledge graph bağlantılarını sorgula.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -100,9 +90,9 @@ async def list_tools():
         )
     ]
 
-
-@app.call_tool()
+@app_mcp.call_tool()
 async def call_tool(name: str, arguments: dict):
+    import json
     mgr = get_manager()
 
     if name == "hafizaya_yaz":
@@ -171,10 +161,24 @@ async def call_tool(name: str, arguments: dict):
 
     raise ValueError(f"Bilinmeyen araç: {name}")
 
+# FastAPI Wrapper
+app = FastAPI()
+sse = SseServerTransport("/messages")
 
-async def main():
-    async with stdio_server() as (r, w):
-        await app.run(r, w, app.create_initialization_options())
+@app.get("/sse")
+async def handle_sse(request: Request):
+    async with sse.connect_scope(request.scope, request.receive, request._send):
+        await app_mcp.run(
+            sse.read_socket,
+            sse.write_socket,
+            app_mcp.create_initialization_options()
+        )
+
+@app.post("/messages")
+async def handle_messages(request: Request):
+    await sse.handle_post_request(request.scope, request.receive, request._send)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import uvicorn
+    # 8001 portunda çalıştır (8000'de dashboard var)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

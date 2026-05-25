@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Hata ayıklama için tüm stderr çıktılarını log dosyasına yaz
+exec 2> /home/xmrah/Projects/localmind/mcp_debug.log
+
 # Localmind MCP Server — Antigravity/IDE entegrasyonu için
 # nix print-dev-env KULLANILMIYOR — doğrudan LD_LIBRARY_PATH ile hızlı başlatma
 

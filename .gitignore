@@ -6,7 +6,9 @@ __pycache__/
 result
 result-*
 *.sqlite3
-chroma_db/
-.vscode/
 *.db
 chroma_db/
+.vscode/
+*.log
+gemma*.sh
+*_sonuclari*.md

@@ -13,13 +13,14 @@ OLLAMA_BASE = "http://localhost:11434"
 
 # Hız için küçük model, kalite için büyük model
 FAST_MODEL  = "qwen2.5-coder:7b-instruct-q6_K"   # Sınıflandırma, upsert kararı
-SMART_MODEL = "qwen2.5-coder:7b-instruct-q6_K"   # Entity çıkarımı (şimdilik aynı, ileride qwen3-14b)
+SMART_MODEL = "gemma4:26b"                         # Entity çıkarımı — 26B MoE'nin derin anlam gücü (23 t/s @ Flash Attention)
 
 
 async def _ollama_generate(prompt: str, model: str = FAST_MODEL) -> str:
     """Ollama'ya istek gönder, saf metin döndür."""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        timeout = 60.0 if model == SMART_MODEL else 30.0  # 26B model daha uzun sürebilir
+        async with httpx.AsyncClient(timeout=timeout) as client:
             res = await client.post(
                 f"{OLLAMA_BASE}/api/generate",
                 json={"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}}

@@ -118,24 +118,41 @@ class MemoryManager:
         return [m for m in all_m if m.oda.lower() == oda.lower()]
 
     def search(self, query: str, n: int = 5, oda: Optional[str] = None) -> list[dict]:
-        """Semantik arama. Importance decay skoruna göre sırala."""
-        try:
-            results = self.collection.query(
-                query_texts=[query],
-                n_results=min(n * 2, max(1, self.collection.count())),
-                include=["documents", "metadatas", "distances"]
-            )
-        except Exception as e:
-            log.error(f"Arama hatası: {e}")
+        """Semantik arama. Cosine benzerliği + importance decay skoruna göre sırala."""
+        total = self.collection.count()
+        if total == 0:
             return []
+
+        where_filter = {"oda": oda} if oda else None
+        n_query = min(n * 2, total)
+
+        # n_results, filtrelenmiş koleksiyondaki eleman sayısını aşabilir; küçülterek yeniden dene
+        for attempt_n in [n_query, n, 1]:
+            try:
+                results = self.collection.query(
+                    query_texts=[query],
+                    n_results=attempt_n,
+                    where=where_filter,
+                    include=["documents", "metadatas", "distances"]
+                )
+                break
+            except Exception as e:
+                if attempt_n == 1:
+                    log.error(f"Arama hatası: {e}")
+                    return []
 
         items = []
         for i, doc_id in enumerate(results["ids"][0]):
             meta = results["metadatas"][0][i]
             distance = results["distances"][0][i]
-            score = 1.0 / (1.0 + distance)  # L2: düşük distance = yüksek benzerlik
+            # Cosine space: distance = 1 - cosine_similarity → score = 1 - distance
+            score = 1.0 - distance
 
-            if score < 0.25:  # L2: 0.25 yaklaşık L2 distance=3 anlamına gelir
+            # Negatif cosine benzerliği olan (tamamen ilgisiz) sonuçları filtrele
+            if score < 0.0:
+                continue
+
+            if meta.get("archived", "false") == "true":
                 continue
 
             # Erişim sayısını artır
@@ -148,11 +165,24 @@ class MemoryManager:
                 "oda": meta.get("oda", "genel"),
                 "score": round(score, 3),
                 "importance": float(meta.get("importance", 7.0)),
+                "access_count": int(meta.get("access_count", 0)),
+                "created_at": meta.get("created_at", datetime.now().isoformat()),
                 "tags": json.loads(meta.get("tags", "[]")),
             })
 
-        # Importance decay ile yeniden sırala
-        items.sort(key=lambda x: x["score"] * 0.6 + (x["importance"] / 10) * 0.4, reverse=True)
+        # Cosine benzerliği (%60) + importance decay (%40) hibrit sıralama
+        def _decay_score(item: dict) -> float:
+            try:
+                days = (datetime.now() - datetime.fromisoformat(item["created_at"])).days
+            except Exception:
+                days = 0
+            decayed = item["importance"] * (0.99 ** days) + (item["access_count"] * 0.5)
+            return min(10.0, decayed)
+
+        items.sort(
+            key=lambda x: x["score"] * 0.6 + (_decay_score(x) / 10) * 0.4,
+            reverse=True
+        )
         return items[:n]
 
     def _increment_access(self, doc_id: str, meta: dict):
@@ -205,23 +235,21 @@ class MemoryManager:
             decision = await decide_upsert(konu, bilgi, similar)
             log.info(f"Upsert kararı: {decision['action']} — {decision['reason']}")
 
-        # 4. Entity çıkarımı (arka planda çalışır, hata olsa bile devam et)
-        relations = []
-        if ollama_ok:
-            try:
-                relations = await extract_entities(konu, bilgi)
-                if relations:
-                    self._save_relations(relations, memory_id=decision.get("existing_id"))
-            except Exception as e:
-                log.warning(f"Entity çıkarımı başarısız: {e}")
-
-        # 5. Tag üretimi
+        # 4. Tag üretimi
         tags = []
         if ollama_ok:
             try:
                 tags = await generate_tags(konu, bilgi)
             except Exception:
                 pass
+
+        # 5. Entity çıkarımı — sadece veriyi al, kaydetme henüz (doğru ID sonra belirleniyor)
+        relations = []
+        if ollama_ok:
+            try:
+                relations = await extract_entities(konu, bilgi)
+            except Exception as e:
+                log.warning(f"Entity çıkarımı başarısız: {e}")
 
         # 6. Kaydet veya güncelle
         if decision["action"] == "skip":
@@ -260,6 +288,9 @@ class MemoryManager:
                 documents=[bilgi],
                 metadatas=[meta]
             )
+            # Doğru ID ile entity ilişkilerini kaydet
+            if relations:
+                self._save_relations(relations, memory_id=existing_id)
             return {
                 "status": "updated",
                 "id": existing_id,
@@ -277,6 +308,9 @@ class MemoryManager:
                 documents=[bilgi],
                 metadatas=[meta]
             )
+            # Doğru ID ile entity ilişkilerini kaydet
+            if relations:
+                self._save_relations(relations, memory_id=new_id)
             return {
                 "status": "created",
                 "id": new_id,
@@ -389,6 +423,30 @@ class MemoryManager:
             log.warning(f"Entity graph hatası: {e}")
 
         return {"nodes": nodes, "links": links}
+
+    def search_graph(self, entity_name: str) -> dict:
+        """Entity adına göre knowledge graph'ı sorgula."""
+        conn = sqlite3.connect(GRAPH_DB_PATH)
+        pattern = f"%{entity_name}%"
+        as_source = conn.execute(
+            "SELECT relation, target_name FROM relations WHERE source_name LIKE ? LIMIT 25",
+            (pattern,)
+        ).fetchall()
+        as_target = conn.execute(
+            "SELECT source_name, relation FROM relations WHERE target_name LIKE ? LIMIT 25",
+            (pattern,)
+        ).fetchall()
+        entities = conn.execute(
+            "SELECT name, entity_type FROM entities WHERE name LIKE ? LIMIT 20",
+            (pattern,)
+        ).fetchall()
+        conn.close()
+        return {
+            "entity": entity_name,
+            "cikis_iliskileri": [{"iliski": r, "hedef": t} for r, t in as_source],
+            "giris_iliskileri": [{"kaynak": s, "iliski": r} for s, r in as_target],
+            "eslesen_varliklar": [{"ad": n, "tip": t} for n, t in entities],
+        }
 
     def archive_memory(self, memory_id: str) -> bool:
         """Bir anıyı arşivle (sil değil, gizle)."""
