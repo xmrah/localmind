@@ -87,6 +87,43 @@ async def list_tools():
                 },
                 "required": ["varlik"]
             }
+        ),
+        types.Tool(
+            name="hafizayi_aktar",
+            description="Tüm aktif anıları JSON dosyasına kaydet (yedek/export). Dosya yolunu döndürür.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        types.Tool(
+            name="oturum_ozetle",
+            description="Bir konuşma veya metin bloğundan önemli bilgileri çıkar ve hafızaya kaydet.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "konusma": {"type": "string", "description": "Özetlenecek konuşma veya metin"},
+                    "agent_id": {"type": "string", "description": "Yazan ajan kimliği (opsiyonel, varsayılan: user)"}
+                },
+                "required": ["konusma"]
+            }
+        ),
+        types.Tool(
+            name="gecmise_bak",
+            description="Son N günde hafızaya eklenen anıları listele.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "gun": {"type": "integer", "description": "Kaç gün geriye bakılsın (varsayılan: 7)", "default": 7}
+                }
+            }
+        ),
+        types.Tool(
+            name="hatirlat",
+            description="Önemli ama uzun süredir hatırlatılmamış anıları göster. Proaktif hatırlatma.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "adet": {"type": "integer", "description": "Kaç hatırlatma dönsün (varsayılan: 5)", "default": 5}
+                }
+            }
         )
     ]
 
@@ -157,6 +194,47 @@ async def call_tool(name: str, arguments: dict):
                 lines.append(f"  ← {rel['kaynak']} [{rel['iliski']}]")
         if not data["cikis_iliskileri"] and not data["giris_iliskileri"] and not data["eslesen_varliklar"]:
             lines.append("Bu varlık için graph kaydı bulunamadı.")
+        return [types.TextContent(type="text", text="\n".join(lines))]
+
+    elif name == "hafizayi_aktar":
+        path = mgr.export_to_file()
+        count = len(json.load(open(path, encoding="utf-8")))
+        return [types.TextContent(type="text", text=f"{count} anı dışa aktarıldı: {path}")]
+
+    elif name == "oturum_ozetle":
+        result = await mgr.summarize_and_save(
+            conversation=arguments["konusma"],
+            agent_id=arguments.get("agent_id", "user")
+        )
+        lines = [result["message"]]
+        if result["facts"]:
+            lines.append("\nKaydedilen bilgiler:")
+            for f in result["facts"]:
+                lines.append(f"  - {f}")
+        return [types.TextContent(type="text", text="\n".join(lines))]
+
+    elif name == "gecmise_bak":
+        gun = int(arguments.get("gun", 7))
+        memories = mgr.get_memories_by_date(days=gun)
+        if not memories:
+            return [types.TextContent(type="text", text=f"Son {gun} günde eklenen anı bulunamadı.")]
+        lines = [f"Son {gun} günde eklenen {len(memories)} anı:"]
+        for m in memories:
+            lines.append(f"\n[{m.oda.upper()}] {m.konu} (önem: {m.importance:.0f}/10)")
+            lines.append(f"  {m.bilgi[:200]}")
+            if m.tags:
+                lines.append(f"  Etiketler: {', '.join(m.tags)}")
+        return [types.TextContent(type="text", text="\n".join(lines))]
+
+    elif name == "hatirlat":
+        adet = int(arguments.get("adet", 5))
+        reminders = mgr.get_reminders(n=adet)
+        if not reminders:
+            return [types.TextContent(type="text", text="Hatırlatılacak anı bulunamadı.")]
+        lines = ["Hatırlatılması gereken anılar (önem x unutulma):"]
+        for r in reminders:
+            lines.append(f"\n[{r['oda'].upper()}] {r['konu']} — {r['days_ago']} gün önce eklendi")
+            lines.append(f"  {r['bilgi'][:200]}")
         return [types.TextContent(type="text", text="\n".join(lines))]
 
     raise ValueError(f"Bilinmeyen araç: {name}")

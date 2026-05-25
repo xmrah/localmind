@@ -8,6 +8,7 @@ result-*
 *.sqlite3
 *.db
 chroma_db/
+exports/
 .vscode/
 *.log
 gemma*.sh

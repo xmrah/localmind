@@ -76,41 +76,133 @@ Sadece kategori adını yaz, başka hiçbir şey yazma:"""
 async def decide_upsert(new_konu: str, new_bilgi: str, existing_memories: list[dict]) -> dict:
     """
     Yeni bilgi mevcut anılarla çelişiyor mu, tamamlıyor mu, yoksa tamamen yeni mi?
-    Döndürür: {"action": "create|update|skip", "existing_id": str|None, "reason": str}
+    Döndürür: {"action": "create|update|skip", "existing_id": str|None, "conflict_ids": list[str], "reason": str}
     """
     if not existing_memories:
-        return {"action": "create", "existing_id": None, "reason": "Benzer anı yok"}
+        return {"action": "create", "existing_id": None, "conflict_ids": [], "reason": "Benzer anı yok"}
 
-    # En yakın anıyı al
-    closest = existing_memories[0]
-    prompt = f"""İki bilgiyi karşılaştır ve ne yapılması gerektiğine karar ver.
+    # Tüm benzer anıları listeye al
+    existing_list = "\n".join([
+        f"[{i+1}] ID:{m.get('id','')} Konu:{m.get('konu','')} Bilgi:{m.get('bilgi', m.get('content',''))[:150]}"
+        for i, m in enumerate(existing_memories)
+    ])
 
-MEVCUT ANI:
-Konu: {closest.get('konu', '')}
-Bilgi: {closest.get('bilgi', closest.get('content', ''))[:300]}
+    prompt = f"""Yeni bilgiyi mevcut anılarla karşılaştır.
+
+MEVCUT ANILAR:
+{existing_list}
 
 YENİ BİLGİ:
 Konu: {new_konu}
 Bilgi: {new_bilgi[:300]}
 
-Seçenekler:
-- "update": Yeni bilgi eskisini güncelliyor veya tamamlıyor (aynı konuda daha güncel bilgi)
-- "create": Tamamen farklı bir konu, yeni kayıt oluştur
-- "skip": Neredeyse aynı bilgi, eklemeye gerek yok
+Görev:
+1. Ne yapılmalı? (update/create/skip)
+   - update: Yeni bilgi en yakın anıyı güncelliyor
+   - create: Yeni ve farklı bir bilgi
+   - skip: Zaten var olan bilgi
+2. Hangi anılar artık geçersiz/çelişiyor? (varsa numaralarını yaz, yoksa hiçbiri)
 
-Sadece seçenek adını yaz (update/create/skip):"""
+Format (sadece bu iki satırı yaz):
+KARAR: update|create|skip [güncelliyorsa: ID:...]
+ÇAKIŞAN: 1,2 | hiçbiri"""
 
     result = await _ollama_generate(prompt, FAST_MODEL)
-    action = result.lower().strip().split()[0] if result else "create"
+    action = "create"
+    existing_id = None
+    conflict_ids = []
 
-    if action not in {"update", "create", "skip"}:
-        action = "create"
+    for line in result.strip().split("\n"):
+        line = line.strip()
+        if line.upper().startswith("KARAR:"):
+            parts = line[6:].strip().split()
+            if parts:
+                action = parts[0].lower()
+                if action not in {"update", "create", "skip"}:
+                    action = "create"
+                # ID: varsa çıkar
+                for p in parts[1:]:
+                    if p.upper().startswith("ID:"):
+                        existing_id = p[3:].strip()
+        elif line.upper().startswith("ÇAKIŞAN:") or line.upper().startswith("CAKISAN:"):
+            val = line.split(":", 1)[1].strip().lower()
+            if val != "hiçbiri" and val != "hicbiri" and val:
+                nums = [v.strip() for v in val.split(",") if v.strip().isdigit()]
+                for n in nums:
+                    idx = int(n) - 1
+                    if 0 <= idx < len(existing_memories):
+                        cid = existing_memories[idx].get("id")
+                        if cid:
+                            conflict_ids.append(cid)
+
+    # update ise ve ID bulunamadıysa en yakını kullan
+    if action == "update" and not existing_id:
+        existing_id = existing_memories[0].get("id")
+
+    # update edilen anı conflict listesinde olmamalı
+    if existing_id and existing_id in conflict_ids:
+        conflict_ids.remove(existing_id)
 
     return {
         "action": action,
-        "existing_id": closest.get("id") if action == "update" else None,
+        "existing_id": existing_id if action == "update" else None,
+        "conflict_ids": conflict_ids,
         "reason": f"LLM kararı: {action}"
     }
+
+
+async def summarize_conversation(conversation: str) -> list[dict]:
+    """
+    Bir konuşma metninden kalıcı öğrenilecek bilgileri çıkar.
+    Döndürür: [{"konu": str, "bilgi": str, "importance": float}]
+    """
+    prompt = f"""Aşağıdaki konuşmadan kalıcı olarak hatırlanması gereken bilgileri çıkar.
+Geçici sorular, selamlaşmalar ve sohbet akışını YAZMA.
+Sadece öğrenilen gerçekler, tercihler, kararlar ve önemli bağlamı yaz.
+
+Her bilgi için şu formatı kullan:
+KONU: <kısa başlık (max 8 kelime)>
+BİLGİ: <öğrenilen bilgi>
+ÖNEM: <1-10>
+---
+
+Konuşma:
+{conversation[:3000]}
+
+Çıkarılan bilgiler:"""
+
+    result = await _ollama_generate(prompt, FAST_MODEL)
+    facts = []
+    current: dict = {}
+
+    for line in result.strip().split("\n"):
+        line = line.strip()
+        if line.upper().startswith("KONU:"):
+            current["konu"] = line[5:].strip()
+        elif line.upper().startswith("BİLGİ:") or line.upper().startswith("BILGI:"):
+            current["bilgi"] = line.split(":", 1)[1].strip()
+        elif line.upper().startswith("ÖNEM:") or line.upper().startswith("ONEM:"):
+            try:
+                current["importance"] = float(line.split(":", 1)[1].strip().split()[0])
+            except Exception:
+                current["importance"] = 7.0
+        elif line == "---":
+            if "konu" in current and "bilgi" in current:
+                facts.append({
+                    "konu": current["konu"],
+                    "bilgi": current["bilgi"],
+                    "importance": current.get("importance", 7.0)
+                })
+            current = {}
+
+    if "konu" in current and "bilgi" in current:
+        facts.append({
+            "konu": current["konu"],
+            "bilgi": current["bilgi"],
+            "importance": current.get("importance", 7.0)
+        })
+
+    return facts[:10]
 
 
 async def extract_entities(konu: str, bilgi: str) -> list[dict]:

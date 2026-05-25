@@ -14,7 +14,7 @@ from chromadb.config import Settings
 from .models import Memory, Entity, Relation
 from .intelligence import (
     classify_room, decide_upsert, extract_entities,
-    generate_tags, is_ollama_available
+    generate_tags, is_ollama_available, summarize_conversation
 )
 
 log = logging.getLogger("localmind.memory")
@@ -46,10 +46,12 @@ class MemoryManager:
 
         # SQLite graph veritabanı
         self._init_graph_db()
+        # FTS5 ilk senkronizasyon
+        self._sync_fts_if_needed()
         log.info(f"MemoryManager hazır. {self.collection.count()} anı yüklü.")
 
     def _init_graph_db(self):
-        """Entity-relation veritabanını başlat."""
+        """Entity-relation ve FTS5 veritabanını başlat."""
         conn = sqlite3.connect(GRAPH_DB_PATH)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS entities (
@@ -69,9 +71,86 @@ class MemoryManager:
             );
             CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_name);
             CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_name);
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                memory_id UNINDEXED,
+                konu,
+                content,
+                tags,
+                tokenize='unicode61'
+            );
         """)
         conn.commit()
         conn.close()
+
+    def _sync_fts_if_needed(self):
+        """FTS5 tablosu ChromaDB'den geride kalmışsa senkronize et."""
+        conn = sqlite3.connect(GRAPH_DB_PATH)
+        fts_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+        conn.close()
+        chroma_count = self.collection.count()
+        if fts_count >= chroma_count:
+            return
+        log.info(f"FTS5 senkronizasyon: {fts_count}/{chroma_count}")
+        data = self.collection.get(include=["documents", "metadatas"])
+        conn = sqlite3.connect(GRAPH_DB_PATH)
+        for i, mem_id in enumerate(data["ids"]):
+            meta = data["metadatas"][i]
+            if meta.get("archived", "false") == "true":
+                continue
+            exists = conn.execute(
+                "SELECT 1 FROM memories_fts WHERE memory_id=?", (mem_id,)
+            ).fetchone()
+            if not exists:
+                tags_str = " ".join(json.loads(meta.get("tags", "[]")))
+                conn.execute(
+                    "INSERT INTO memories_fts(memory_id, konu, content, tags) VALUES(?,?,?,?)",
+                    (mem_id, meta.get("konu", ""), data["documents"][i], tags_str)
+                )
+        conn.commit()
+        conn.close()
+        log.info("FTS5 senkronizasyon tamamlandı.")
+
+    def _fts_upsert(self, memory_id: str, konu: str, content: str, tags: list):
+        """FTS5 tablosuna ekle veya güncelle."""
+        try:
+            tags_str = " ".join(tags) if tags else ""
+            conn = sqlite3.connect(GRAPH_DB_PATH)
+            conn.execute("DELETE FROM memories_fts WHERE memory_id=?", (memory_id,))
+            conn.execute(
+                "INSERT INTO memories_fts(memory_id, konu, content, tags) VALUES(?,?,?,?)",
+                (memory_id, konu, content, tags_str)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            log.warning(f"FTS upsert hatası: {e}")
+
+    def _bm25_search(self, query: str, limit: int = 20) -> dict:
+        """SQLite FTS5 BM25 keyword arama. {memory_id: 0-1 skor} döndürür."""
+        import re
+        clean = re.sub(r'[^\w\s]', ' ', query, flags=re.UNICODE)
+        words = [w for w in clean.split() if len(w) >= 2]
+        if not words:
+            return {}
+        fts_query = " OR ".join(f'"{w}"' for w in words[:10])
+        try:
+            conn = sqlite3.connect(GRAPH_DB_PATH)
+            rows = conn.execute(
+                "SELECT memory_id, rank FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
+                (fts_query, limit)
+            ).fetchall()
+            conn.close()
+        except Exception as e:
+            log.warning(f"BM25 arama hatası: {e}")
+            return {}
+        if not rows:
+            return {}
+        # FTS5 rank negatif; en negatif = en iyi eşleşme
+        ranks = [r for _, r in rows]
+        min_r, max_r = min(ranks), max(ranks)
+        if min_r == max_r:
+            return {mid: 1.0 for mid, _ in rows}
+        return {mid: (max_r - r) / (max_r - min_r) for mid, r in rows}
 
     # ─────────────────────────────────────────────────────
     # TEMEL OKUMA İŞLEMLERİ
@@ -118,7 +197,7 @@ class MemoryManager:
         return [m for m in all_m if m.oda.lower() == oda.lower()]
 
     def search(self, query: str, n: int = 5, oda: Optional[str] = None) -> list[dict]:
-        """Semantik arama. Cosine benzerliği + importance decay skoruna göre sırala."""
+        """Hibrit arama: BM25 keyword (%30) + cosine semantic (%50) + importance decay (%20)."""
         total = self.collection.count()
         if total == 0:
             return []
@@ -126,6 +205,9 @@ class MemoryManager:
         where_filter = {"oda": oda} if oda else None
         # Küçük koleksiyonlarda daha fazla aday çek; benzer sonuçlar HNSW'de alt sıralarda olabilir
         n_query = min(max(n * 4, 20), total)
+
+        # BM25 keyword skorlarını önce hesapla (ChromaDB'den bağımsız)
+        bm25_scores = self._bm25_search(query, limit=n_query)
 
         # n_results, filtrelenmiş koleksiyondaki eleman sayısını aşabilir; küçülterek yeniden dene
         for attempt_n in [n_query, n, 1]:
@@ -165,13 +247,14 @@ class MemoryManager:
                 "content": results["documents"][0][i],
                 "oda": meta.get("oda", "genel"),
                 "score": round(score, 3),
+                "bm25": round(bm25_scores.get(doc_id, 0.0), 3),
                 "importance": float(meta.get("importance", 7.0)),
                 "access_count": int(meta.get("access_count", 0)),
                 "created_at": meta.get("created_at", datetime.now().isoformat()),
                 "tags": json.loads(meta.get("tags", "[]")),
             })
 
-        # Cosine benzerliği (%60) + importance decay (%40) hibrit sıralama
+        # Hibrit sıralama: cosine (%50) + BM25 (%30) + importance decay (%20)
         def _decay_score(item: dict) -> float:
             try:
                 days = (datetime.now() - datetime.fromisoformat(item["created_at"])).days
@@ -181,7 +264,7 @@ class MemoryManager:
             return min(10.0, decayed)
 
         items.sort(
-            key=lambda x: x["score"] * 0.6 + (_decay_score(x) / 10) * 0.4,
+            key=lambda x: x["score"] * 0.5 + x["bm25"] * 0.3 + (_decay_score(x) / 10) * 0.2,
             reverse=True
         )
         return items[:n]
@@ -231,10 +314,14 @@ class MemoryManager:
         similar = self.search(f"{konu} {bilgi}", n=3, oda=oda)
 
         # 3. Upsert kararı
-        decision = {"action": "create", "existing_id": None, "reason": "Ollama yok"}
+        decision = {"action": "create", "existing_id": None, "conflict_ids": [], "reason": "Ollama yok"}
         if ollama_ok and similar:
             decision = await decide_upsert(konu, bilgi, similar)
             log.info(f"Upsert kararı: {decision['action']} — {decision['reason']}")
+            # Çakışan anıları otomatik arşivle
+            for cid in decision.get("conflict_ids", []):
+                if self.archive_memory(cid):
+                    log.info(f"Çakışan anı arşivlendi: {cid}")
 
         # 4. Tag üretimi
         tags = []
@@ -289,6 +376,8 @@ class MemoryManager:
                 documents=[bilgi],
                 metadatas=[meta]
             )
+            # FTS5 güncelle
+            self._fts_upsert(existing_id, konu, bilgi, tags)
             # Doğru ID ile entity ilişkilerini kaydet
             if relations:
                 self._save_relations(relations, memory_id=existing_id)
@@ -309,6 +398,8 @@ class MemoryManager:
                 documents=[bilgi],
                 metadatas=[meta]
             )
+            # FTS5 ekle
+            self._fts_upsert(new_id, konu, bilgi, tags)
             # Doğru ID ile entity ilişkilerini kaydet
             if relations:
                 self._save_relations(relations, memory_id=new_id)
@@ -458,6 +549,14 @@ class MemoryManager:
             meta = data["metadatas"][0]
             meta["archived"] = "true"
             self.collection.update(ids=[memory_id], metadatas=[meta])
+            # FTS5'ten de kaldır
+            try:
+                conn = sqlite3.connect(GRAPH_DB_PATH)
+                conn.execute("DELETE FROM memories_fts WHERE memory_id=?", (memory_id,))
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
             return True
         except Exception as e:
             log.error(f"Arşivleme hatası: {e}")
@@ -487,3 +586,116 @@ class MemoryManager:
             "most_active_room": max(rooms, key=rooms.get) if rooms else "genel",
             "oldest_memory": min(memories, key=lambda m: m.created_at).created_at if memories else None,
         }
+
+    def export_to_file(self, path: Optional[str] = None) -> str:
+        """Tüm aktif anıları JSON dosyasına kaydet, dosya yolunu döndür."""
+        import os
+        if path is None:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = f"/home/xmrah/Projects/localmind/exports/memories_{ts}.json"
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        memories = self.get_all_memories(include_archived=False)
+        data = [
+            {
+                "konu": m.konu,
+                "bilgi": m.bilgi,
+                "oda": m.oda,
+                "importance": m.importance,
+                "tags": m.tags,
+                "created_at": m.created_at,
+                "agent_id": m.agent_id,
+            }
+            for m in memories
+        ]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return path
+
+    # ─────────────────────────────────────────────────────
+    # KONUŞMA ÖZETLEMESİ
+    # ─────────────────────────────────────────────────────
+
+    async def summarize_and_save(self, conversation: str, agent_id: str = "user") -> dict:
+        """
+        Konuşma metninden önemli bilgileri çıkarıp hafızaya kaydeder.
+        Döndürür: {"saved": int, "skipped": int, "facts": list[str]}
+        """
+        facts = await summarize_conversation(conversation)
+        if not facts:
+            return {"saved": 0, "skipped": 0, "facts": [], "message": "Kayda değer bilgi bulunamadı."}
+
+        saved, skipped = 0, 0
+        fact_summaries = []
+        for f in facts:
+            result = await self.add_memory(
+                konu=f["konu"],
+                bilgi=f["bilgi"],
+                agent_id=agent_id,
+                importance=float(f.get("importance", 7.0))
+            )
+            if result.get("status") == "skipped":
+                skipped += 1
+            else:
+                saved += 1
+                fact_summaries.append(f"[{result.get('oda','?').upper()}] {f['konu']}")
+
+        return {
+            "saved": saved,
+            "skipped": skipped,
+            "facts": fact_summaries,
+            "message": f"{saved} bilgi hafızaya kaydedildi, {skipped} tekrar atlandı."
+        }
+
+    # ─────────────────────────────────────────────────────
+    # ZAMANSAL SORGULAR
+    # ─────────────────────────────────────────────────────
+
+    def get_memories_by_date(self, days: int = 7) -> list[Memory]:
+        """Son N günde eklenen anıları döndür, önem skoruna göre sıralı."""
+        cutoff = datetime.now().timestamp() - (days * 86400)
+        memories = self.get_all_memories()
+        recent = []
+        for m in memories:
+            try:
+                ts = datetime.fromisoformat(m.created_at).timestamp()
+                if ts >= cutoff:
+                    recent.append(m)
+            except Exception:
+                pass
+        recent.sort(key=lambda m: m.importance, reverse=True)
+        return recent
+
+    # ─────────────────────────────────────────────────────
+    # PROAKTİF HATIRLATMA
+    # ─────────────────────────────────────────────────────
+
+    def get_reminders(self, n: int = 5) -> list[dict]:
+        """
+        Önemli ama uzun süredir erişilmemiş anıları döndür.
+        Ebbinghaus unutma eğrisine göre en çok 'unutulmaya yüz tutmuş' anılar önce gelir.
+        """
+        memories = self.get_all_memories()
+        scored = []
+        now = datetime.now()
+        for m in memories:
+            try:
+                days = (now - datetime.fromisoformat(m.created_at)).days
+            except Exception:
+                days = 0
+            # Yüksek önem + uzun süre erişilmemiş = hatırlatılmalı
+            # decay ne kadar düşükse (unutulmuşsa) skor o kadar yüksek
+            decayed = m.importance * (0.99 ** days) + (m.access_count * 0.5)
+            forgotten_score = m.importance - min(decayed, m.importance)
+            scored.append({
+                "id": m.id,
+                "konu": m.konu,
+                "bilgi": m.bilgi,
+                "oda": m.oda,
+                "importance": m.importance,
+                "days_ago": days,
+                "forgotten_score": round(forgotten_score, 2),
+                "tags": m.tags,
+            })
+        # En çok unutulmuş ve önemli olanlar önce
+        scored.sort(key=lambda x: x["forgotten_score"], reverse=True)
+        return scored[:n]
