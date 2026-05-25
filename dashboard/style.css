@@ -349,6 +349,116 @@ input[type="range"]::-webkit-slider-thumb {
 /* Section Title */
 .section-title { font-size: 1.3rem; font-weight: 600; margin-bottom: 20px; }
 
+/* ── Home Dashboard ── */
+.home-dashboard { display: flex; flex-direction: column; gap: 20px; }
+
+.home-search { max-width: 100%; margin: 0; }
+
+.home-cols {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+    align-items: start;
+}
+
+.home-col-title {
+    font-size: 0.6rem;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+
+/* Recent memories */
+.home-recent {
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    padding: 20px;
+}
+.recent-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 11px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid var(--glass-border);
+}
+.recent-item:last-of-type { border-bottom: none; }
+.recent-item:hover { background: rgba(138,43,226,0.08); }
+.recent-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 6px;
+}
+.recent-body { flex: 1; min-width: 0; }
+.recent-title { font-size: 0.88rem; color: var(--text-main); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-meta { display: flex; align-items: center; gap: 8px; }
+
+/* Room list col */
+.home-rooms-col {
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    padding: 20px;
+}
+.home-room-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.home-room-row:hover { background: rgba(255,255,255,0.04); }
+.home-room-icon { font-size: 1rem; width: 24px; text-align: center; flex-shrink: 0; }
+.home-room-name { flex: 1; font-size: 0.85rem; color: var(--text-main); }
+.home-room-count {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    background: rgba(0,255,204,0.08);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.home-more {
+    font-size: 0.75rem;
+    color: var(--accent-violet);
+    cursor: pointer;
+    margin-top: 12px;
+    padding: 6px 0 0;
+    border-top: 1px solid var(--glass-border);
+    transition: color 0.2s;
+}
+.home-more:hover { color: var(--accent-cyan); }
+
+/* ── Graph Page ── */
+.graph-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 120px);
+    gap: 10px;
+}
+.graph-page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px;
+    flex-shrink: 0;
+}
+.graph-page #graphArea {
+    flex: 1;
+    min-height: 0;
+    border-radius: 16px;
+    border: 1px solid var(--glass-border);
+    background: radial-gradient(ellipse at 50% 40%, rgba(138,43,226,0.06) 0%, transparent 65%);
+    overflow: hidden;
+}
+
 /* ── Stats Row ── */
 .stats-row {
     display: grid;
@@ -464,113 +574,9 @@ input[type="range"]::-webkit-slider-thumb {
     font-size: 0.9rem;
 }
 
-/* ═══════════════════════════════════════════════════════
-   HOME 2-COLUMN LAYOUT — Obsidian Style
-   ═══════════════════════════════════════════════════════ */
-
-.home-layout {
-    display: grid;
-    grid-template-columns: 340px 1fr;
-    gap: 20px;
-    height: calc(100vh - 120px);
-    max-height: calc(100vh - 120px);
-}
-
-.home-left {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    overflow-y: auto;
-    padding-right: 4px;
-}
-
-.home-left .search-container {
-    margin: 0;
-    max-width: 100%;
-}
-
-.home-left .cards-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-bottom: 0;
-}
-
-.home-left .card {
-    padding: 14px;
-}
-
-.home-left .card-icon { font-size: 1.1rem; margin-bottom: 6px; }
-.home-left .card h4 { font-size: 0.6rem; }
-.home-left .card .count { font-size: 1.1rem; }
-
-.graph-hint {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    background: rgba(138, 43, 226, 0.06);
-    border: 1px solid rgba(138, 43, 226, 0.15);
-    border-radius: 10px;
-    font-size: 0.75rem;
-    color: var(--text-dim);
-    animation: pulse-hint 3s ease-in-out infinite;
-}
-
-@keyframes pulse-hint {
-    0%, 100% { border-color: rgba(138, 43, 226, 0.15); }
-    50% { border-color: rgba(138, 43, 226, 0.4); box-shadow: 0 0 12px rgba(138, 43, 226, 0.15); }
-}
-
-/* SAĞ: Graf Alanı */
-.home-right {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-height: 0;
-}
-
-.graph-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 4px;
-    flex-shrink: 0;
-}
-
-.graph-title {
-    font-size: 0.6rem;
-    letter-spacing: 3px;
-    color: var(--text-dim);
-    font-weight: 600;
-}
-
-.graph-subtitle {
-    font-size: 0.72rem;
-    color: var(--text-dim);
-    transition: color 0.4s ease;
-}
-
-.home-right #graphArea {
-    flex: 1;
-    min-height: 0;
-    border-radius: 16px;
-    border: 1px solid var(--glass-border);
-    background: radial-gradient(ellipse at 50% 40%, rgba(138,43,226,0.06) 0%, transparent 65%);
-    overflow: hidden;
-    transition: border-color 0.3s ease;
-}
-
-.home-right #graphArea:hover {
-    border-color: rgba(138, 43, 226, 0.25);
-}
-
-/* Responsive: küçük ekranda tek sütun */
+/* Responsive */
 @media (max-width: 900px) {
-    .home-layout {
-        grid-template-columns: 1fr;
-        height: auto;
-    }
-    .home-right #graphArea {
-        height: 400px;
-    }
+    .home-cols { grid-template-columns: 1fr; }
+    .graph-page { height: auto; }
+    .graph-page #graphArea { height: 500px; }
 }

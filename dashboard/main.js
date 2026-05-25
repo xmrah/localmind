@@ -115,6 +115,7 @@ async function router() {
         case "rooms": await viewRooms(el); break;
         case "room": await viewRoomDetail(el, param); break;
         case "timeline": viewTimeline(el); break;
+        case "graph": viewGraph(el); break;
         case "analytics": await viewAnalytics(el); break;
         case "settings": await viewSettings(el); break;
         default: await viewHome(el);
@@ -143,51 +144,108 @@ async function loadSidebar() {
 
 async function viewHome(el) {
     if (rawGraph.nodes.length === 0) await loadGraphData();
+    const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
     const { rooms, total } = parseStatsFromNodes(rawGraph.nodes);
     const activeRooms = rooms.filter(r => r.count > 0);
-    const accentColors = ["card-violet", "card-blue", "card-purple", "card-cyan"];
 
-    el.innerHTML = `
-        <div class="view home-layout">
-            <!-- SOL: Arama + Kartlar -->
-            <div class="home-left">
-                <div class="search-container">
-                    <span class="search-icon">🔍</span>
-                    <input type="text" class="search-bar" id="searchInput" placeholder="Zihninde ara...">
-                    <div class="search-results" id="searchResults"></div>
-                </div>
-                <div class="cards-grid">
-                    ${activeRooms.map((r, i) => `
-                        <div class="card ${accentColors[i % accentColors.length]}" onclick="navigate('room','${r.key}')">
-                            <div class="card-icon">${r.icon}</div>
-                            <h4>${r.label.toUpperCase()}</h4>
-                            <p class="count">${r.count} Anı</p>
-                            <p class="meta">Odaya gir →</p>
-                        </div>`).join("")}
-                    <div class="card card-cyan" style="border-style:dashed;background:transparent" onclick="navigate('rooms')">
-                        <div class="card-icon">➕</div><h4>TÜM ODALAR</h4><p class="count">${total} Toplam</p>
-                    </div>
-                </div>
-                <div class="graph-hint">
-                    <span>🧠</span> <span>Düğümlere tıkla — anlam bağlarını keşfet</span>
-                </div>
+    const linkCount = rawGraph.links.filter(l => {
+        const ids = new Set(memNodes.map(n => n.id));
+        const s = typeof l.source === "object" ? l.source.id : l.source;
+        const t = typeof l.target === "object" ? l.target.id : l.target;
+        return ids.has(s) && ids.has(t);
+    }).length;
+
+    const avgImp = memNodes.length
+        ? (memNodes.reduce((sum, n) => sum + (Number(n.importance) || 0), 0) / memNodes.length).toFixed(1)
+        : 0;
+
+    // Son 7 eklenen anı (created_at'e göre)
+    const recent = [...memNodes]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 7);
+
+    const impBadge = imp => {
+        const v = Number(imp) || 0;
+        if (v >= 9) return `<span class="imp-badge imp-critical">${v}</span>`;
+        if (v >= 7) return `<span class="imp-badge imp-high">${v}</span>`;
+        if (v >= 4) return `<span class="imp-badge imp-med">${v}</span>`;
+        return `<span class="imp-badge imp-low">${v}</span>`;
+    };
+
+    el.innerHTML = `<div class="view home-dashboard">
+
+        <!-- Arama -->
+        <div class="search-container home-search">
+            <span class="search-icon">🔍</span>
+            <input type="text" class="search-bar" id="searchInput" placeholder="Zihninde ara...">
+            <div class="search-results" id="searchResults"></div>
+        </div>
+
+        <!-- İstatistik satırı -->
+        <div class="stats-row">
+            <div class="stat-card"><div class="stat-val">${total}</div><div class="stat-lbl">Toplam Anı</div></div>
+            <div class="stat-card"><div class="stat-val">${activeRooms.length}</div><div class="stat-lbl">Oda</div></div>
+            <div class="stat-card"><div class="stat-val">${avgImp}</div><div class="stat-lbl">Ort. Önem</div></div>
+            <div class="stat-card"><div class="stat-val">${linkCount}</div><div class="stat-lbl">Bağlantı</div></div>
+        </div>
+
+        <!-- Alt iki kolon -->
+        <div class="home-cols">
+            <!-- Sol: Son anılar -->
+            <div class="home-recent">
+                <div class="home-col-title">SON EKLENEN ANILAR</div>
+                ${recent.length === 0
+                    ? `<div class="empty-state">Henüz anı yok.</div>`
+                    : recent.map(m => {
+                        const info = getRoomInfo(m.oda || "genel");
+                        const payload = JSON.stringify({label:m.label,oda:m.oda,content:m.content,tags:m.tags,importance:m.importance,created_at:m.created_at}).replace(/'/g,"&#39;");
+                        return `<div class="recent-item" onclick='openMemory(${payload})'>
+                            <div class="recent-dot" style="background:${info.color}"></div>
+                            <div class="recent-body">
+                                <div class="recent-title">${m.label}</div>
+                                <div class="recent-meta">
+                                    <span class="tl-room">${info.icon} ${info.label}</span>
+                                    ${impBadge(m.importance)}
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join("")}
+                <div class="home-more" onclick="navigate('timeline')">Tümünü gör →</div>
             </div>
-            <!-- SAĞ: Zihin Grafiği -->
-            <div class="home-right">
-                <div class="graph-header">
-                    <span class="graph-title">ZİHİN HARİTASI</span>
-                    <span class="graph-subtitle" id="graphSubtitle">${total} anı · ${rawGraph.links.filter(l => {
-                        const nodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
-                        const ids = new Set(nodes.map(n => n.id));
-                        const s = typeof l.source === "object" ? l.source.id : l.source;
-                        const t = typeof l.target === "object" ? l.target.id : l.target;
-                        return ids.has(s) && ids.has(t);
-                    }).length} bağlantı</span>
-                </div>
-                <div id="graphArea"></div>
+
+            <!-- Sağ: Odalar -->
+            <div class="home-rooms-col">
+                <div class="home-col-title">ODALAR</div>
+                ${activeRooms.map(r => `
+                    <div class="home-room-row" onclick="navigate('room','${r.key}')">
+                        <span class="home-room-icon">${r.icon}</span>
+                        <span class="home-room-name">${r.label}</span>
+                        <span class="home-room-count">${r.count}</span>
+                    </div>`).join("")}
+                <div class="home-more" onclick="navigate('graph')">Zihin haritası →</div>
             </div>
-        </div>`;
-    initSearch(); renderGraph();
+        </div>
+    </div>`;
+    initSearch();
+}
+
+function viewGraph(el) {
+    const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
+    const linkCount = rawGraph.links.filter(l => {
+        const ids = new Set(memNodes.map(n => n.id));
+        const s = typeof l.source === "object" ? l.source.id : l.source;
+        const t = typeof l.target === "object" ? l.target.id : l.target;
+        return ids.has(s) && ids.has(t);
+    }).length;
+
+    el.innerHTML = `<div class="view graph-page">
+        <div class="graph-page-header">
+            <span class="graph-title">ZİHİN HARİTASI</span>
+            <span class="graph-subtitle" id="graphSubtitle">${memNodes.length} anı · ${linkCount} bağlantı</span>
+        </div>
+        <div id="graphArea"></div>
+    </div>`;
+    renderGraph();
 }
 
 
