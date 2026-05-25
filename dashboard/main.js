@@ -3,9 +3,16 @@
  * Zihin Sarayı: %100 Dinamik, Backend-Bağımsız Keşif
  */
 
-const THRESHOLD = 0.45;
+let THRESHOLD = parseFloat(localStorage.getItem("lm_threshold") || "0.45");
 const MAX_DEPTH = 3;
 const COLORS = { center: "#00FFCC", near: "#8A2BE2", far: "rgba(255,255,255,0.15)" };
+
+// Tema uygula
+function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("lm_theme", theme);
+}
+applyTheme(localStorage.getItem("lm_theme") || "dark");
 
 const ROOM_CONFIG = {
     "architecture": { label: "Mimari",    icon: "🏗️", color: "var(--accent-violet)" },
@@ -418,57 +425,115 @@ async function viewAnalytics(el) {
 }
 
 async function viewSettings(el) {
-    el.innerHTML = `<div class="view"><h1 class="section-title">⚙️ Ayarlar</h1><div style="color:var(--text-dim);padding:20px">Yükleniyor…</div></div>`;
-    const health = await api("/api/health") || {};
-    const profile = await api("/api/profile") || {};
+    el.innerHTML = `<div class="view"><div style="color:var(--text-dim);padding:20px">Yükleniyor…</div></div>`;
+    const [health, profile] = await Promise.all([api("/api/health"), api("/api/profile")]);
+    const h = health || {};
+    const currentTheme = localStorage.getItem("lm_theme") || "dark";
+    const currentRoom = localStorage.getItem("lm_default_room") || "";
+    const { rooms } = parseStatsFromNodes(rawGraph.nodes);
 
     el.innerHTML = `<div class="view">
         <h1 class="section-title">⚙️ Ayarlar</h1>
 
+        <!-- Görünüm -->
+        <div class="settings-group">
+            <h3>GÖRÜNÜM</h3>
+            <div class="setting-row">
+                <div>
+                    <span class="setting-label">Tema</span>
+                    <div class="setting-desc">Arayüz renk teması</div>
+                </div>
+                <div class="theme-toggle">
+                    <button class="theme-btn ${currentTheme==='dark'?'active':''}" onclick="setTheme('dark')">🌙 Koyu</button>
+                    <button class="theme-btn ${currentTheme==='light'?'active':''}" onclick="setTheme('light')">☀️ Açık</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Graf -->
+        <div class="settings-group">
+            <h3>GRAFİK</h3>
+            <div class="setting-row">
+                <div>
+                    <span class="setting-label">Benzerlik eşiği</span>
+                    <div class="setting-desc">Düğümler arası bağlantı hassasiyeti — düşük: daha fazla bağlantı</div>
+                </div>
+                <div class="slider-wrap">
+                    <input type="range" id="thresholdSlider" min="0.3" max="0.8" step="0.05" value="${THRESHOLD}">
+                    <span class="slider-val" id="thresholdVal">${THRESHOLD}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hafıza tercihleri -->
+        <div class="settings-group">
+            <h3>HAFIZA TERCİHLERİ</h3>
+            <div class="setting-row">
+                <div>
+                    <span class="setting-label">Varsayılan oda</span>
+                    <div class="setting-desc">Yeni anı eklerken önceden seçili oda</div>
+                </div>
+                <select class="setting-select" id="defaultRoomSelect" onchange="saveDefaultRoom(this.value)">
+                    <option value="">— Seçiniz —</option>
+                    ${rooms.map(r => `<option value="${r.key}" ${currentRoom===r.key?'selected':''}>${r.icon} ${r.label}</option>`).join("")}
+                </select>
+            </div>
+        </div>
+
+        <!-- Dışa aktarma -->
+        <div class="settings-group">
+            <h3>VERİ</h3>
+            <div class="setting-row">
+                <div>
+                    <span class="setting-label">Dışa aktar</span>
+                    <div class="setting-desc">Tüm anıları JSON olarak indir</div>
+                </div>
+                <button class="export-btn" onclick="exportMemories()">⬇ JSON İndir</button>
+            </div>
+        </div>
+
+        <!-- Sistem durumu (bilgi) -->
         <div class="settings-group">
             <h3>SİSTEM DURUMU</h3>
-            <div class="setting-row">
-                <span class="setting-label">Servis</span>
-                <span class="setting-value ${health.status==='ok' ? 'status-ok' : 'status-err'}">${health.status === 'ok' ? '● Aktif' : '● Hata'}</span>
-            </div>
-            <div class="setting-row">
-                <span class="setting-label">Ollama</span>
-                <span class="setting-value ${health.ollama ? 'status-ok' : 'status-err'}">${health.ollama ? '● Bağlı' : '● Bağlı değil'}</span>
-            </div>
-            <div class="setting-row">
-                <span class="setting-label">Versiyon</span>
-                <span class="setting-value">${health.version || '—'}</span>
-            </div>
-            <div class="setting-row">
-                <span class="setting-label">Son güncelleme</span>
-                <span class="setting-value">${health.timestamp ? new Date(health.timestamp).toLocaleString("tr-TR") : '—'}</span>
-            </div>
-        </div>
-
-        <div class="settings-group">
-            <h3>HAFIZA</h3>
-            <div class="setting-row">
-                <span class="setting-label">Toplam anı</span>
-                <span class="setting-value">${health.memories ?? '—'}</span>
-            </div>
-            <div class="setting-row">
-                <span class="setting-label">Agent</span>
-                <span class="setting-value">${profile.agent_id || 'default'}</span>
-            </div>
-            <div class="setting-row">
-                <span class="setting-label">Benzerlik eşiği</span>
-                <span class="setting-value">${THRESHOLD}</span>
-            </div>
-        </div>
-
-        <div class="settings-group">
-            <h3>MCP ARAÇLARI</h3>
-            ${["hafizaya_yaz","hafizada_ara","hafizayi_aktar","oturum_ozetle","gecmise_bak","hatirlat","grafik_sorgula","oda_listele","profil_goster","hafizayi_unut"]
-                .map(t => `<div class="setting-row"><span class="setting-label">${t}</span><span class="setting-value status-ok">● Aktif</span></div>`)
-                .join("")}
+            <div class="setting-row"><span class="setting-label">Servis</span><span class="setting-value ${h.status==='ok'?'status-ok':'status-err'}">${h.status==='ok'?'● Aktif':'● Hata'}</span></div>
+            <div class="setting-row"><span class="setting-label">Ollama</span><span class="setting-value ${h.ollama?'status-ok':'status-err'}">${h.ollama?'● Bağlı':'● Bağlı değil'}</span></div>
+            <div class="setting-row"><span class="setting-label">Versiyon</span><span class="setting-value">${h.version||'—'}</span></div>
+            <div class="setting-row"><span class="setting-label">Toplam anı</span><span class="setting-value">${h.memories??'—'}</span></div>
+            <div class="setting-row"><span class="setting-label">Son güncelleme</span><span class="setting-value">${h.timestamp?new Date(h.timestamp).toLocaleString("tr-TR"):'—'}</span></div>
         </div>
     </div>`;
+
+    // Slider event
+    const slider = document.getElementById("thresholdSlider");
+    const valEl = document.getElementById("thresholdVal");
+    slider?.addEventListener("input", () => {
+        valEl.textContent = slider.value;
+        THRESHOLD = parseFloat(slider.value);
+        localStorage.setItem("lm_threshold", slider.value);
+    });
 }
+
+window.setTheme = theme => {
+    applyTheme(theme);
+    // Butonları güncelle
+    document.querySelectorAll(".theme-btn").forEach(b => {
+        b.classList.toggle("active", b.textContent.includes(theme === "dark" ? "Koyu" : "Açık"));
+    });
+};
+
+window.saveDefaultRoom = val => localStorage.setItem("lm_default_room", val);
+
+window.exportMemories = async () => {
+    const data = await api("/api/graph");
+    if (!data) return;
+    const memories = (data.nodes || []).filter(n => n.type !== "entity");
+    const blob = new Blob([JSON.stringify(memories, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `localmind-export-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+};
 
 // ═══════════════════════════════════════════════════════
 // UTILS
