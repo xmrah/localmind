@@ -50,8 +50,17 @@ SSE (Server-Sent Events) ile dashboard hiçbir yenileme gerektirmeden anlık ver
 - **stdio** — Antigravity IDE ve VSCodium Continue eklentisi (`server.py`)
 - **HTTP/SSE** — Open WebUI (`mcp_sse_server.py`)
 
-### Obsidian-Style Graph View
-D3.js ile oluşturulmuş interaktif bilgi ağı. Tıklanan anı parlar, ilgisiz düğümler silikleşir (Focus Mode). Hem semantik benzerlik bağları hem de entity ilişkileri tek grafikte görselleştirilir.
+### Dashboard (6 Sayfa)
+Tam özellikli web arayüzü:
+- **Home** — Komuta merkezi: arama, istatistik satırı, son anılar, oda hızlı erişim
+- **Memory Rooms** — Oda bazlı anı kartları
+- **Timeline** — Tarih gruplarına göre kronolojik anı akışı, önem badge'leri
+- **Graph** — Obsidian tarzı D3.js zihin haritası; tıklanan anı parlar, ilgisiz düğümler silikleşir (Focus Mode)
+- **Analytics** — Oda dağılımı, top 5 anı, önem bandı dağılımı, özet istatistikler
+- **Settings** — Dark/Light tema, benzerlik eşiği slider, varsayılan oda, JSON export
+
+### Oturum Özetleme (`oturum_ozetle`)
+Claude Code veya yerel model sohbeti bitiminde tek komutla tüm konuşmayı analiz eder, KONU/BİLGİ/ÖNEM formatında anılara dönüştürür ve hafızaya kaydeder. Türkçe destek için `qwen3-14b` modeli kullanılır.
 
 ---
 
@@ -132,9 +141,14 @@ D3.js ile oluşturulmuş interaktif bilgi ağı. Tıklanan anı parlar, ilgisiz 
 | :--- | :--- |
 | `hafizaya_yaz` | Bilgiyi akıllıca kaydet (upsert + sınıflandırma + entity çıkarımı) |
 | `hafizada_ara` | Semantik arama yap |
+| `hafizayi_aktar` | Tüm anıları listele |
 | `hafizayi_unut` | Anıyı arşivle |
-| `profil_goster` | Kullanıcı hafıza profilini göster |
+| `oturum_ozetle` | Sohbet metnini analiz edip anılara dönüştür ve kaydet |
+| `gecmise_bak` | Son N günde eklenen anıları listele |
+| `hatirlat` | Uzun süre erişilmemiş önemli anıları hatırlat (Ebbinghaus decay) |
+| `grafik_sorgula` | Belirli bir anının bağlantılı düğümlerini sorgula |
 | `oda_listele` | Tüm odaları ve anı sayılarını listele |
+| `profil_goster` | Kullanıcı hafıza profilini göster |
 
 ---
 
