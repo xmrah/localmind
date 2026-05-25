@@ -124,7 +124,8 @@ class MemoryManager:
             return []
 
         where_filter = {"oda": oda} if oda else None
-        n_query = min(n * 2, total)
+        # Küçük koleksiyonlarda daha fazla aday çek; benzer sonuçlar HNSW'de alt sıralarda olabilir
+        n_query = min(max(n * 4, 20), total)
 
         # n_results, filtrelenmiş koleksiyondaki eleman sayısını aşabilir; küçülterek yeniden dene
         for attempt_n in [n_query, n, 1]:
@@ -148,8 +149,8 @@ class MemoryManager:
             # Cosine space: distance = 1 - cosine_similarity → score = 1 - distance
             score = 1.0 - distance
 
-            # Negatif cosine benzerliği olan (tamamen ilgisiz) sonuçları filtrele
-            if score < 0.0:
+            # Tamamen zıt anlamsal içerikleri filtrele (cosine < -0.5)
+            if score < -0.5:
                 continue
 
             if meta.get("archived", "false") == "true":
