@@ -13,7 +13,7 @@ OLLAMA_BASE = "http://localhost:11434"
 
 # Hız için küçük model, kalite için büyük model
 FAST_MODEL  = "qwen2.5-coder:7b-instruct-q6_K"   # Sınıflandırma, upsert kararı
-SMART_MODEL = "gemma4:26b"                         # Entity çıkarımı — 26B MoE'nin derin anlam gücü (23 t/s @ Flash Attention)
+SMART_MODEL = "gemma4:26b"                         # Entity çıkarımı — 26B MoE'nin derin anlam gücü
 
 
 async def _ollama_generate(prompt: str, model: str = FAST_MODEL) -> str:
