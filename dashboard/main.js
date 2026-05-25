@@ -19,6 +19,7 @@ const ROOM_CONFIG = {
     "donanim":      { label: "Donanım",   icon: "📱", color: "var(--accent-cyan)"   },
     "hardware":     { label: "Donanım",   icon: "📱", color: "var(--accent-cyan)"   },
     "personal":     { label: "Kişisel",   icon: "👤", color: "var(--accent-violet)" },
+    "kisisel":      { label: "Kişisel",   icon: "👤", color: "var(--accent-violet)" },
     "genel":        { label: "Genel",     icon: "📂", color: "var(--text-dim)"      }
 };
 
@@ -199,15 +200,28 @@ async function viewRooms(el) {
 
 async function viewRoomDetail(el, roomKey) {
     const info = getRoomInfo(roomKey);
-    const memories = rawGraph.nodes.filter(n => n.oda.toLowerCase() === roomKey.toLowerCase());
     el.innerHTML = `<div class="view">
         <div class="breadcrumb"><a href="#rooms">Odalar</a> / <strong>${info.label}</strong></div>
         <h1 class="section-title">${info.label} Odası</h1>
-        <div class="memory-list">${memories.map(m => `
-            <div class="memory-item" onclick='openMemory(${JSON.stringify(m).replace(/'/g,"&#39;")})'>
-                <h4>${m.label}</h4><p>${m.content.substring(0,200)}...</p>
-            </div>`).join("")}</div>
+        <div class="memory-list" id="roomMemoryList"><div style="color:var(--text-dim);padding:20px">Yükleniyor…</div></div>
     </div>`;
+    const memories = await api(`/api/room/${encodeURIComponent(roomKey)}`) || [];
+    const list = document.getElementById("roomMemoryList");
+    if (!list) return;
+    if (memories.length === 0) {
+        list.innerHTML = `<div style="color:var(--text-dim);padding:20px">Bu odada henüz anı yok.</div>`;
+        return;
+    }
+    list.innerHTML = memories.map(m => {
+        const dateStr = m.created_at ? new Date(m.created_at).toLocaleDateString("tr-TR") : "";
+        const tags = (m.tags || []).map(t => `<span class="memory-tag">${t}</span>`).join("");
+        const payload = JSON.stringify({label: m.konu, oda: m.oda, content: m.content, tags: m.tags, importance: m.importance, created_at: m.created_at}).replace(/'/g,"&#39;");
+        return `<div class="memory-item" onclick='openMemory(${payload})'>
+            <h4>${m.konu}</h4>
+            <p>${(m.content||"").substring(0,200)}${m.content && m.content.length > 200 ? "…" : ""}</p>
+            ${tags || dateStr ? `<div class="memory-meta">${tags}${dateStr ? `<span class="memory-tag" style="margin-left:auto;background:rgba(77,124,255,0.1);color:var(--accent-blue)">${dateStr}</span>` : ""}</div>` : ""}
+        </div>`;
+    }).join("");
 }
 
 async function viewAnalytics(el) {
@@ -234,13 +248,17 @@ function viewSettings(el) {
 function initSearch() {
     const input = document.getElementById("searchInput");
     const box = document.getElementById("searchResults");
+    let _searchTimer = null;
     input?.addEventListener("input", () => {
-        const q = input.value.toLowerCase();
+        const q = input.value.trim();
         if (q.length < 2) return box.classList.remove("active");
-        const results = rawGraph.nodes.filter(n => n.label.toLowerCase().includes(q) || n.content.toLowerCase().includes(q));
-        box.innerHTML = results.slice(0,5).map(m => `<div class="search-result-item" onclick='openMemory(${JSON.stringify(m).replace(/'/g,"&#39;")})'>
-            <h4>${m.label}</h4><p>${m.content.substring(0,80)}...</p></div>`).join("");
-        box.classList.toggle("active", results.length > 0);
+        clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(async () => {
+            const results = await api(`/api/search?q=${encodeURIComponent(q)}&n=5`) || [];
+            box.innerHTML = results.map(m => `<div class="search-result-item" onclick='openMemory(${JSON.stringify({label:m.konu,oda:m.oda,content:m.content,tags:m.tags,importance:m.importance,created_at:m.created_at}).replace(/'/g,"&#39;")})'>
+                <h4>${m.konu}</h4><p>${(m.content||"").substring(0,80)}…</p></div>`).join("");
+            box.classList.toggle("active", results.length > 0);
+        }, 300);
     });
 }
 
@@ -447,23 +465,55 @@ function openMemory(data) {
     if (!panel) {
         document.body.insertAdjacentHTML("beforeend", `<div id="detailPanel" class="detail-panel">
             <div class="detail-header"><span id="detailBadge" class="detail-badge">ODA</span><button class="close-btn" onclick="closeDetail()">×</button></div>
-            <h2 id="detailTitle"></h2><div id="detailContent" class="detail-body"></div></div>`);
+            <h2 id="detailTitle"></h2>
+            <div id="detailMeta" class="detail-meta"></div>
+            <div id="detailContent" class="detail-body"></div>
+            <div id="detailTags" class="detail-tags"></div>
+        </div>`);
         panel = document.getElementById("detailPanel");
     }
-    document.getElementById("detailTitle").innerText = data.label || data.konu;
+    document.getElementById("detailTitle").innerText = data.label || data.konu || "";
     document.getElementById("detailBadge").innerText = (data.oda || "genel").toUpperCase();
-    document.getElementById("detailContent").innerText = data.content;
+    document.getElementById("detailContent").innerText = data.content || "";
+
+    const metaEl = document.getElementById("detailMeta");
+    const parts = [];
+    if (data.importance) parts.push(`Önem: ${Number(data.importance).toFixed(0)}/10`);
+    if (data.created_at) parts.push(new Date(data.created_at).toLocaleDateString("tr-TR", {day:"numeric",month:"long",year:"numeric"}));
+    metaEl.innerText = parts.join("  ·  ");
+
+    const tagsEl = document.getElementById("detailTags");
+    const tags = data.tags || [];
+    tagsEl.innerHTML = tags.map(t => `<span class="memory-tag">${t}</span>`).join("");
+
     panel.classList.add("active");
 }
 window.closeDetail = () => document.getElementById("detailPanel")?.classList.remove("active");
+document.addEventListener("keydown", e => { if (e.key === "Escape") window.closeDetail(); });
 
 function updateTelemetry(n) {
     const el = document.getElementById("telemetry");
     if (el) el.innerText = `[TELEMETRY]\nSTATUS: ${sseStatus}\nNODES: ${n}/${rawGraph.nodes.length}\nTHRESHOLD: ${THRESHOLD}`;
 }
 
+let _lastTotal = -1;
 const sse = new EventSource("/api/events");
-sse.onmessage = e => sseStatus = e.data;
+sse.onmessage = async e => {
+    try {
+        const data = JSON.parse(e.data);
+        sseStatus = "CONNECTED";
+        const total = data.total ?? 0;
+        document.getElementById("headerTotal").innerText = total;
+        if (_lastTotal !== -1 && total !== _lastTotal) {
+            await loadGraphData();
+            await loadSidebar();
+            const { view } = getRoute();
+            if (view === "home") renderGraph();
+        }
+        _lastTotal = total;
+    } catch { sseStatus = e.data; }
+};
 sse.onopen = () => { sseStatus = "CONNECTED"; document.getElementById("pulseStatus").innerText = "Aktif (SSE)"; };
+sse.onerror = () => { sseStatus = "DISCONNECTED"; document.getElementById("pulseStatus").innerText = "Bağlantı kesildi"; };
 
 (async () => { await loadSidebar(); await router(); })();

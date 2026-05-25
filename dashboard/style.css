@@ -291,8 +291,10 @@ body {
 .detail-badge { background: var(--accent-violet); font-size: 0.65rem; padding: 3px 10px; border-radius: 4px; text-transform: uppercase; letter-spacing: 1px; }
 .close-btn { background: none; border: 1px solid var(--glass-border); color: var(--text-dim); width: 30px; height: 30px; border-radius: 8px; cursor: pointer; font-size: 1rem; transition: all 0.2s; }
 .close-btn:hover { border-color: var(--accent-cyan); color: white; }
-.detail-panel h2 { font-size: 1.1rem; color: var(--accent-cyan); margin-bottom: 16px; line-height: 1.4; }
-.detail-body { font-size: 0.85rem; line-height: 1.7; color: var(--text-dim); }
+.detail-panel h2 { font-size: 1.1rem; color: var(--accent-cyan); margin-bottom: 8px; line-height: 1.4; }
+.detail-meta { font-size: 0.72rem; color: var(--text-dim); margin-bottom: 16px; font-family: 'JetBrains Mono', monospace; }
+.detail-body { font-size: 0.85rem; line-height: 1.7; color: var(--text-dim); margin-bottom: 16px; }
+.detail-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* Analytics */
 .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }

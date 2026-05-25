@@ -452,7 +452,8 @@ class MemoryManager:
 
         # ChromaDB düğümleri
         nodes = [{"id": m.id, "label": m.konu, "oda": m.oda, "content": m.bilgi,
-                  "importance": m.importance, "type": "memory"} for m in memories]
+                  "importance": m.importance, "tags": m.tags,
+                  "created_at": m.created_at, "type": "memory"} for m in memories]
 
         # Vektör benzerlik bağları
         links = []
