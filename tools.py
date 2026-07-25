@@ -2,8 +2,10 @@
 Localmind v2 — Merkezi Araç Katmanı (FastMCP)
 Tüm 10 MCP aracı burada, Stateless mimariyle tanımlanmıştır.
 """
-import sys, os, json, asyncio
-from typing import Optional
+import asyncio
+import json
+import os
+import sys
 
 # Dinamik path çözümü (Hardcoded sys.path düzeltildi)
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -12,12 +14,13 @@ if PROJECT_ROOT not in sys.path:
 
 # C-Extensions fallback (NixOS için)
 import ctypes
+
 for lib in ["libstdc++.so.6", "libz.so.1"]:
     try: ctypes.CDLL(lib)
     except Exception: pass
 
-from pydantic import Field
 from fastmcp import FastMCP
+from pydantic import Field
 
 # Core imports
 from core.memory_manager import MemoryManager
@@ -37,7 +40,7 @@ def get_manager() -> MemoryManager:
 async def hafizaya_yaz(
     konu: str = Field(..., description="Anının başlığı (kısa, açıklayıcı)"),
     bilgi: str = Field(..., description="Kaydedilecek bilginin tamamı"),
-    oda: Optional[str] = Field(None, description="Oda (opsiyonel, boş bırakılırsa otomatik belirlenir)", json_schema_extra={"enum": ["mimari", "guvenlik", "donanim", "ogrenme", "kisisel", "genel"]}),
+    oda: str | None = Field(None, description="Oda (opsiyonel, boş bırakılırsa otomatik belirlenir)", json_schema_extra={"enum": ["mimari", "guvenlik", "donanim", "ogrenme", "kisisel", "genel"]}),
     importance: float = Field(7.0, description="Önem skoru 1-10 (varsayılan: 7)"),
     agent_id: str = Field("user", description="Yazan ajan kimliği (opsiyonel, varsayılan: user)")
 ) -> str:
@@ -51,7 +54,7 @@ async def hafizaya_yaz(
 async def hafizada_ara(
     sorgu: str = Field(..., description="Arama sorgusu"),
     sonuc_sayisi: int = Field(3, description="Kaç sonuç dönsün (varsayılan: 3)"),
-    oda: Optional[str] = Field(None, description="Belirli bir odada ara (opsiyonel)")
+    oda: str | None = Field(None, description="Belirli bir odada ara (opsiyonel)")
 ) -> str:
     """Zihin Sarayı'nda semantik arama yap. Öneme ve benzerliğe göre sıralı sonuçlar döner."""
     mgr = get_manager()
@@ -130,7 +133,8 @@ async def hafizayi_aktar() -> str:
     """Tüm aktif anıları JSON dosyasına kaydet (yedek/export). Dosya yolunu döndürür."""
     mgr = get_manager()
     path = await asyncio.to_thread(mgr.export_to_file)
-    count = len(json.load(open(path, encoding="utf-8")))
+    with open(path, encoding="utf-8") as f:
+        count = len(json.load(f))
     return f"{count} anı dışa aktarıldı: {path}"
 
 

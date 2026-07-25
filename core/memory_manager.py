@@ -3,20 +3,24 @@ Localmind v2 — Memory Manager
 Projenin kalbi. Tüm hafıza işlemleri buradan geçer.
 Mem0 tarzı akıllı upsert + Letta tarzı entity grafiği.
 """
-import sqlite3
+import asyncio
 import json
 import logging
+import sqlite3
 from datetime import datetime
-from typing import Optional
+
 import chromadb
 from chromadb.config import Settings
 
-from .models import Memory, Entity, Relation
 from .intelligence import (
-    classify_room, decide_upsert, extract_entities,
-    generate_tags, is_ollama_available, summarize_conversation
+    classify_room,
+    decide_upsert,
+    extract_entities,
+    generate_tags,
+    is_ollama_available,
+    summarize_conversation,
 )
-import asyncio
+from .models import Memory
 
 log = logging.getLogger("localmind.memory")
 
@@ -197,7 +201,7 @@ class MemoryManager:
         all_m = self.get_all_memories()
         return [m for m in all_m if m.oda.lower() == oda.lower()]
 
-    def search(self, query: str, n: int = 5, oda: Optional[str] = None) -> list[dict]:
+    def search(self, query: str, n: int = 5, oda: str | None = None) -> list[dict]:
         """Hibrit arama: BM25 keyword (%30) + cosine semantic (%50) + importance decay (%20)."""
         total = self.collection.count()
         if total == 0:
@@ -289,7 +293,7 @@ class MemoryManager:
         self,
         konu: str,
         bilgi: str,
-        oda: Optional[str] = None,
+        oda: str | None = None,
         agent_id: str = "user",
         importance: float = 7.0
     ) -> dict:
@@ -417,7 +421,7 @@ class MemoryManager:
     # GRAPH İŞLEMLERİ
     # ─────────────────────────────────────────────────────
 
-    def _save_relations(self, relations: list[dict], memory_id: Optional[str] = None):
+    def _save_relations(self, relations: list[dict], memory_id: str | None = None):
         """Entity ilişkilerini SQLite'a kaydet."""
         conn = sqlite3.connect(GRAPH_DB_PATH)
         now = datetime.now().isoformat()
@@ -589,7 +593,7 @@ class MemoryManager:
             "oldest_memory": min(memories, key=lambda m: m.created_at).created_at if memories else None,
         }
 
-    def export_to_file(self, path: Optional[str] = None) -> str:
+    def export_to_file(self, path: str | None = None) -> str:
         """Tüm aktif anıları JSON dosyasına kaydet, dosya yolunu döndür."""
         import os
         if path is None:

@@ -2,10 +2,9 @@
 Localmind v2 — Intelligence Layer
 Ollama LLM ile akıllı karar alma: sınıflandırma, entity çıkarımı, upsert kararı.
 """
-import json
-import httpx
 import logging
-from typing import Optional
+
+import httpx
 
 log = logging.getLogger("localmind.intelligence")
 

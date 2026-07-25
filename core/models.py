@@ -2,10 +2,10 @@
 Localmind v2 — Veri Modelleri
 Tüm sistem bu modeller üzerinden konuşur.
 """
-from pydantic import BaseModel, Field
-from datetime import datetime
-from typing import Optional
 import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, Field
 
 
 class Memory(BaseModel):
@@ -39,7 +39,7 @@ class Entity(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     entity_type: str = "concept"     # "person", "device", "concept", "place", "tech"
-    description: Optional[str] = None
+    description: str | None = None
     created_at: str = Field(default_factory=lambda: datetime.now().astimezone().isoformat())
 
 
@@ -49,7 +49,7 @@ class Relation(BaseModel):
     source_name: str
     relation: str                    # "KULLANIR", "ÇALIŞTIRIR", "BAĞLIDIR", "ÖĞRENMEK_İSTİYOR"
     target_name: str
-    memory_id: Optional[str] = None  # Hangi anıdan çıkarıldı
+    memory_id: str | None = None  # Hangi anıdan çıkarıldı
     created_at: str = Field(default_factory=lambda: datetime.now().astimezone().isoformat())
 
 
@@ -57,7 +57,7 @@ class UpsertDecision(BaseModel):
     """LLM'nin upsert kararı."""
     action: str                      # "create", "update", "merge", "skip"
     reason: str
-    existing_id: Optional[str] = None
+    existing_id: str | None = None
 
 
 class SearchResult(BaseModel):

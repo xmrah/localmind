@@ -2,21 +2,25 @@
 Localmind v2 — Ana Sunucu (FastAPI + SSE + StaticFiles)
 Tüm API rotaları burada tanımlanır, MemoryManager üzerinden çalışır.
 """
-import sys, os, asyncio, json, logging
-from datetime import datetime
+import asyncio
+import json
+import logging
+import os
+import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 sys.path.insert(0, "/home/xmrah/Projects/localmind")
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+
+# LD_LIBRARY_PATH ChromaDB için gerekli
+import ctypes
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
 
-# LD_LIBRARY_PATH ChromaDB için gerekli
-import ctypes
 for lib in ["libstdc++.so.6", "libz.so.1"]:
     try: ctypes.CDLL(lib)
     except Exception: pass
@@ -48,7 +52,7 @@ app = FastAPI(title="Localmind v2", version="2.0.0", lifespan=lifespan)
 class AddMemoryRequest(BaseModel):
     konu: str
     bilgi: str
-    oda: Optional[str] = None
+    oda: str | None = None
     agent_id: str = "user"
     importance: float = 7.0
 
@@ -68,7 +72,7 @@ async def health():
         "version": "2.0.0",
         "memories": manager.collection.count() if manager else 0,
         "ollama": ollama_ok,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().astimezone().isoformat()
     }
 
 @app.get("/api/stats")
@@ -108,7 +112,7 @@ async def graph():
     return manager.get_graph_data()
 
 @app.get("/api/search")
-async def search(q: str = Query(..., min_length=1), oda: Optional[str] = None, n: int = 5):
+async def search(q: str = Query(..., min_length=1), oda: str | None = None, n: int = 5):
     if not manager:
         raise HTTPException(503)
     return manager.search(q, n=n, oda=oda)
