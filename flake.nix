@@ -36,9 +36,9 @@
             # Sanal ortamı otomatik aktif et
             source .venv/bin/activate
             
-            # Hoş geldin mesajı (Sadece stderr üzerinden gösterilecek)
-            echo "🧠 localmind (NixOS Forensic Edition) Geliştirme Ortamına Hoş Geldin!" >&2
-            echo "👉 Gerekli paketleri kurmak için: pip install fastmcp chromadb" >&2
+            export PYTHONPATH="$PWD:$PYTHONPATH"
+            echo "🧠 Localmind v2 — Zihin Sarayı Geliştirme Ortamı" >&2
+            echo "👉 Bağımlılıkları kurmak için: pip install -r requirements.txt" >&2
           '';
         };
       }

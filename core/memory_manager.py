@@ -16,6 +16,7 @@ from .intelligence import (
     classify_room, decide_upsert, extract_entities,
     generate_tags, is_ollama_available, summarize_conversation
 )
+import asyncio
 
 log = logging.getLogger("localmind.memory")
 
@@ -311,7 +312,7 @@ class MemoryManager:
                 oda = "genel"
 
         # 2. Benzer anı ara
-        similar = self.search(f"{konu} {bilgi}", n=3, oda=oda)
+        similar = await asyncio.to_thread(self.search, f"{konu} {bilgi}", 3, oda)
 
         # 3. Upsert kararı
         decision = {"action": "create", "existing_id": None, "conflict_ids": [], "reason": "Ollama yok"}
@@ -320,7 +321,7 @@ class MemoryManager:
             log.info(f"Upsert kararı: {decision['action']} — {decision['reason']}")
             # Çakışan anıları otomatik arşivle
             for cid in decision.get("conflict_ids", []):
-                if self.archive_memory(cid):
+                if await asyncio.to_thread(self.archive_memory, cid):
                     log.info(f"Çakışan anı arşivlendi: {cid}")
 
         # 4. Tag üretimi
@@ -360,7 +361,7 @@ class MemoryManager:
             # Mevcut anıyı güncelle
             existing_id = decision["existing_id"]
             try:
-                existing = self.collection.get(ids=[existing_id], include=["metadatas"])
+                existing = await asyncio.to_thread(self.collection.get, ids=[existing_id], include=["metadatas"])
                 existing_meta = existing["metadatas"][0] if existing["metadatas"] else {}
                 meta["created_at"] = existing_meta.get("created_at", now)
                 meta["access_count"] = existing_meta.get("access_count", "0")
@@ -371,16 +372,16 @@ class MemoryManager:
             except Exception:
                 pass
 
-            self.collection.update(
+            await asyncio.to_thread(self.collection.update,
                 ids=[existing_id],
                 documents=[bilgi],
                 metadatas=[meta]
             )
             # FTS5 güncelle
-            self._fts_upsert(existing_id, konu, bilgi, tags)
+            await asyncio.to_thread(self._fts_upsert, existing_id, konu, bilgi, tags)
             # Doğru ID ile entity ilişkilerini kaydet
             if relations:
-                self._save_relations(relations, memory_id=existing_id)
+                await asyncio.to_thread(self._save_relations, relations, existing_id)
             return {
                 "status": "updated",
                 "id": existing_id,
@@ -393,16 +394,16 @@ class MemoryManager:
             # Yeni anı oluştur
             import uuid
             new_id = str(uuid.uuid4())
-            self.collection.add(
+            await asyncio.to_thread(self.collection.add,
                 ids=[new_id],
                 documents=[bilgi],
                 metadatas=[meta]
             )
             # FTS5 ekle
-            self._fts_upsert(new_id, konu, bilgi, tags)
+            await asyncio.to_thread(self._fts_upsert, new_id, konu, bilgi, tags)
             # Doğru ID ile entity ilişkilerini kaydet
             if relations:
-                self._save_relations(relations, memory_id=new_id)
+                await asyncio.to_thread(self._save_relations, relations, new_id)
             return {
                 "status": "created",
                 "id": new_id,
