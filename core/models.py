@@ -17,15 +17,19 @@ class Memory(BaseModel):
     agent_id: str = "user"           # Kim yazdı: "user", "antigravity", "continue"
     importance: float = 7.0          # 1-10 arası önem skoru
     access_count: int = 0            # Kaç kez erişildi
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now().astimezone().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now().astimezone().isoformat())
     tags: list[str] = Field(default_factory=list)
     archived: bool = False
 
     def decay_score(self) -> float:
         """Zaman geçtikçe önem skoru düşer, ama erişim artırır."""
         from datetime import datetime
-        days = (datetime.now() - datetime.fromisoformat(self.created_at)).days
+        now = datetime.now().astimezone()
+        created = datetime.fromisoformat(self.created_at)
+        if created.tzinfo is None:
+            created = created.astimezone() # Fallback for old naive records
+        days = (now - created).days
         decayed = self.importance * (0.99 ** days) + (self.access_count * 0.5)
         return min(10.0, decayed)
 
@@ -36,7 +40,7 @@ class Entity(BaseModel):
     name: str
     entity_type: str = "concept"     # "person", "device", "concept", "place", "tech"
     description: Optional[str] = None
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now().astimezone().isoformat())
 
 
 class Relation(BaseModel):
@@ -46,7 +50,7 @@ class Relation(BaseModel):
     relation: str                    # "KULLANIR", "ÇALIŞTIRIR", "BAĞLIDIR", "ÖĞRENMEK_İSTİYOR"
     target_name: str
     memory_id: Optional[str] = None  # Hangi anıdan çıkarıldı
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now().astimezone().isoformat())
 
 
 class UpsertDecision(BaseModel):
