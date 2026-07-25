@@ -1,117 +1,121 @@
-# 🧠 Localmind v2 — Zihin Sarayı
-
-**"Dijital İkinci Beyin — Tamamen Yerel, Tamamen Senin"**
-
-Localmind, bilgilerin sadece depolanmadığı, aynı zamanda **anlamlandırıldığı**, **sınıflandırıldığı**, **ilişkilendirildiği** ve gerçek zamanlı olarak izlenebildiği, **FastMCP destekli Dijital Hafıza Yönetim Sistemi**dir. 
-
-Tüm veriler yerel makinenizde kalır. İnternet'e bir byte bile çıkmaz. **Temmuz 2026 standartlarına uygun Stateless (Durumsuz) mimari** üzerine inşa edilmiştir.
-
----
-
-## 🚀 Öne Çıkan Özellikler
-
-### ⚡ Stateless MCP (Model Context Protocol) Mimarisi
-Eski stateful mimarilerden farklı olarak Localmind, **FastMCP** kullanarak tamamen durumsuz çalışır:
-- **`server.py` (Stdio):** Antigravity IDE, Claude Desktop ve VSCodium Continue entegrasyonu.
-- **`server_http.py` (Streamable-HTTP):** Open-WebUI gibi modern yapay zeka istemcileri için güvenli, yüksek performanslı HTTP transport arayüzü.
-
-### 🧠 Semantik Hafıza ve Akıllı Upsert
-Bilgiler düz metin olarak değil, vektör temsilcileri (embedding) olarak saklanır. Arama yaparken kelime eşleşmesi değil, **anlam benzerliği** kullanılır.
-Her yeni bilgi eklenirken Ollama mevcut anılarla karşılaştırma yapar: `create` (yeni), `update` (güncelle) veya `skip` (zaten biliyor) kararı verir.
-
-### 🕸️ Knowledge Graph (Bilgi Ağı)
-Her anıdan **varlıklar (entity)** ve aralarındaki **ilişkiler (relation)** otomatik olarak çıkarılır ve SQLite tabanlı bir grafik veritabanında saklanır. 
-
-### 🏷️ Otomatik Sınıflandırma ve Etiketleme
-Eklenen her bilgi, Ollama tarafından analiz edilerek 6 odadan birine atanır (`mimari`, `guvenlik`, `donanim`, `ogrenme`, `kisisel`, `genel`) ve bağlamsal etiketler üretilir.
-
-### ⏳ Zaman Aşımı Skoru (Ebbinghaus Decay)
-Eski anıların önemi zamanla düşer, ancak her erişimde önem skoru artarak "hatırlanan" anılar güçlenir. Arama sonuçları hibrit bir skorla (%60 benzerlik + %40 önem) sıralanır.
-
-### 📊 Dashboard (6 Sayfa)
-Vanilla JS ve D3.js ile geliştirilen modern, Glassmorphism temalı kontrol paneli üzerinden Timeline, Analytics ve Canlı Zihin Haritası (Graph) görüntülenebilir.
-
----
-
-## 🛠️ Teknoloji Yığını
-
-| Katman | Teknoloji | Açıklama |
-| :--- | :--- | :--- |
-| **MCP Engine** | [FastMCP](https://github.com/jlowin/fastmcp) | Stateless arayüz, Pydantic şema doğrulaması |
-| **AI Engine** | [Ollama](https://github.com/ollama/ollama) | Yerel LLM işlemleri ve Sınıflandırma |
-| **Vektör DB** | [ChromaDB](https://www.trychroma.com/) | Kosinüs benzerliği tabanlı semantik arama |
-| **Graph DB** | SQLite | Entity-Relation ağı |
-| **Ortam** | [Nix Flakes](https://nixos.org/) | İzole, bağımlılık krizlerinden arındırılmış geliştirme ortamı |
-
----
-
-## 🏗️ Mimari Yapı
+<div align="center">
 
 ```text
-.
-├── core/                    # Sistemin beyni
-│   ├── intelligence.py      # Ollama etkileşimleri (upsert, sınıflandırma, entity)
-│   ├── memory_manager.py    # ChromaDB + SQLite yönetimi, async.to_thread I/O
-│   └── models.py            # Pydantic veri şemaları
-│
-├── dashboard/               # Glassmorphism HTML/JS/CSS paneli
-├── tools.py                 # (YENİ) Tüm FastMCP tool'larının DRY merkez üssü
-│
-├── server.py                # MCP Stdio sunucusu (IDE'ler için)
-├── server_http.py           # (YENİ) MCP Streamable-HTTP sunucusu (Open-WebUI için)
-├── server_sse.py            # Dashboard REST API + SSE
-│
-├── requirements.txt         # Sabitlenmiş bağımlılıklar
-└── flake.nix                # NixOS geliştirme ortamı
+  _                     _           _           _ 
+ | |                   | |         (_)         | |
+ | |     ___   ___ __ _| |_ __ ___  _ _ __   __| |
+ | |    / _ \ / __/ _` | | '_ ` _ \| | '_ \ / _` |
+ | |___| (_) | (_| (_| | | | | | | | | | | | (_| |
+ \_____/\___/ \___\__,_|_|_| |_| |_|_|_| |_|\__,_|
+```
+
+**Sovereign Digital Memory & Knowledge Graph for Local LLMs**
+
+[![FastMCP](https://img.shields.io/badge/FastMCP-v3.0+-blue?style=flat-square)](https://github.com/jlowin/fastmcp)
+[![Python](https://img.shields.io/badge/Python-3.10+-yellow?style=flat-square)](https://www.python.org/)
+[![NixOS](https://img.shields.io/badge/NixOS-Supported-5277C3?style=flat-square&logo=NixOS)](https://nixos.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](#lisans)
+
+</div>
+
+Localmind, yazdığınız notları sadece depolayan aptal bir veritabanı değildir. Arka planda **Ollama** ile çalışan, bilgileri anlayan, birbiriyle ilişkilendiren ve ihtiyaç anında bağlamıyla birlikte doğrudan yapay zeka modelinize (LLM) sunan **durumsuz (stateless) bir Zihin Sarayıdır.**
+
+Hiçbir veri internete çıkmaz. Bulut yok, abonelik yok. Tamamen yerel, tamamen sizin.
+
+---
+
+## 🚀 Temel Felsefe & Özellikler
+
+* **Veri Egemenliği (Sovereignty):** Sistem tamamen kapalı devredir. Tüm verileriniz makinenizde, sizin kontrolünüz altındadır.
+* **Semantik Vektör Arama (ChromaDB):** Geleneksel regex veya kelime eşleşmesi yerine, cümlenin "anlamını" arar. 
+* **Otonom Knowledge Graph (SQLite):** Eklenen her bilgi parçacığından `Kişi`, `Kavram`, `Teknoloji` gibi varlıkları (Entity) ve aralarındaki ilişkileri otomatik olarak çıkarır.
+* **Ebbinghaus Unutma Eğrisi:** Sisteme entegre edilen zaman aşımı skoru sayesinde, uzun süre erişilmeyen önemsiz bilgiler zamanla geriye düşerken, sık erişilen kritik notlar her zaman canlı kalır.
+* **Otomatik Sınıflandırma:** Notlarınız arka planda analiz edilerek en uygun odalara (`mimari`, `güvenlik`, `donanım`, `kişisel` vb.) otomatik yerleştirilir.
+
+---
+
+## 🧠 MCP Araçları (Tools)
+
+Localmind, FastMCP mimarisi üzerinden LLM'inize şu otonom yetenekleri kazandırır:
+
+| Araç Adı | Açıklama |
+| :--- | :--- |
+| `hafizaya_yaz` | Bilgiyi akıllıca kaydeder, varlık çıkarımı yapar ve sınıflandırır. |
+| `hafizada_ara` | Zihin sarayında semantik benzerliğe göre arama yapar. |
+| `grafik_sorgula` | Bir kavramın veya kişinin Knowledge Graph üzerindeki bağlantı ağını çizer. |
+| `oturum_ozetle` | Uzun sohbetleri analiz edip yapılandırılmış kalıcı anılara dönüştürür. |
+| `hatirlat` | Uzun süredir bakılmayan ama "önemli" olarak işaretlenmiş anıları proaktif olarak hatırlatır. |
+| `gecmise_bak` | Son N gün içinde öğrenilen veya kaydedilen tüm bilgileri listeler. |
+| `profil_goster` | Hangi konularda daha çok düşündüğünüzü (oda ve etiket dağılımı) analiz eder. |
+
+---
+
+## 🏗️ Mimari Topoloji
+
+Localmind, **Temmuz 2026** standartlarına uygun Stateless FastMCP mimarisi üzerine inşa edilmiştir.
+
+```mermaid
+graph TD
+    %% İstemciler
+    A1[Open-WebUI] -->|HTTP / SSE| B[FastMCP Router]
+    A2[Continue IDE] -->|Stdio| B
+    
+    %% Çekirdek
+    B -->|Otonom Çağrılar| C{Memory Manager}
+    G[D3.js Dashboard] -.->|REST API| C
+    
+    %% Veritabanları ve AI
+    C -->|Semantik Kayıt| D[(ChromaDB)]
+    C -->|Knowledge Graph| E[(SQLite)]
+    C <-->|Embeddings & NLP| F[Ollama]
 ```
 
 ---
 
-## 🔧 MCP Araçları (Tools)
+## ⚙️ Kurulum & Çalıştırma
 
-Localmind, istemcilere şu otonom araçları sunar:
-- `hafizaya_yaz`: Bilgiyi akıllıca kaydet (upsert + entity çıkarımı)
-- `hafizada_ara`: Semantik arama yap
-- `hafizayi_aktar`: Tüm anıları listele
-- `hafizayi_unut`: Anıyı arşivle
-- `oturum_ozetle`: Sohbeti analiz edip anılara dönüştür
-- `gecmise_bak`: Son N günde eklenen anıları listele
-- `hatirlat`: Uzun süre erişilmemiş önemli anıları hatırlat
-- `grafik_sorgula`: Bir anının bağlantılı düğümlerini sorgula
-- `oda_listele`: Odaları ve doluluk oranlarını listele
-- `profil_goster`: Kullanıcı hafıza profilini göster
+Proje temel olarak standart bir Python uygulamasıdır. Sisteminizde **Ollama**'nın çalışıyor olduğundan emin olun.
 
----
-
-## ⚙️ Kurulum ve Çalıştırma
-
-### 1. NixOS Ortamını Hazırlama
+### 1. Ortam Hazırlığı
 ```bash
 git clone https://codeberg.org/xmrah/localmind.git
 cd localmind
-nix develop
-```
 
-### 2. Bağımlılıkları Kurma
-```bash
-# Artık requirements.txt kullanılarak tutarlı bir ortam sağlanır
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
+*(NixOS kullanıcıları doğrudan `nix develop` ile izole ortama girebilirler.)*
 
-### 3. Servisleri Başlatma
-```bash
-# IDE Entegrasyonu için (Stdio)
-./run_mcp.sh
+### 2. İstemciye Göre Sunucuyu Başlatma
+Localmind, kullanacağınız arayüze göre farklı transport katmanları sunar:
 
-# Open-WebUI Entegrasyonu için (Streamable-HTTP / Port 8001)
-./run_mcp_sse.sh
+- **Open-WebUI için (HTTP MCP):**
+  ```bash
+  ./run_mcp_sse.sh
+  ```
+- **Continue / VSCodium için (Stdio MCP):**
+  ```bash
+  ./run_mcp.sh
+  ```
+- **D3.js Dashboard Arayüzü için:**
+  ```bash
+  python server_sse.py
+  ```
 
-# Dashboard REST API'sini başlatmak için (Port 8000)
-python server_sse.py
-```
+---
 
-### 4. IDE (Continue / Antigravity) Entegrasyonu
-`~/.continue/config.json` içine ekleyin:
+## 🔌 İstemci Entegrasyonları
+
+### Open-WebUI
+Yönetici paneli > Dış Araçlar (Bağlantılar) sekmesine gidin ve bağlantıyı şöyle yapılandırın:
+- **Tür:** `MCP` (veya MCP Streamable HTTP)
+- **URL:** `http://127.0.0.1:8001/mcp`
+- **ID:** `localmind`
+*(Yetki/Auth kısmını `Yok` veya boş bırakın, sistem tamamen yereldir.)*
+
+### Continue
+`~/.continue/config.json` dosyanıza şu bloğu ekleyin:
 ```json
 {
   "mcpServers": [
@@ -126,13 +130,11 @@ python server_sse.py
 
 ---
 
-## 🏠 NixOS Entegrasyonu (ai-toggle)
-Sovereign bir yapı olan NixOS sisteminde Localmind otomatik olarak yönetilir. `systemd` servisleri:
-- `localmind.service` → Dashboard REST API
-- `localmind-mcp-sse.service` → MCP HTTP Köprüsü (`server_http.py`)
-- Tüm zincir `ai-toggle start` ile ayağa kalkar, `ai-toggle stop` ile güvenle uykuya dalar.
+## 🛡️ Sovereign Geliştirici Notu
 
----
+Bu sistem, verinin bulut şirketlerinin elinde oyuncak olmasına karşı bir duruştur. `core/memory_manager.py` içindeki tüm veritabanı I/O işlemleri `asyncio.to_thread` ile asenkronize edilmiş olup, yapay zeka modelinizin saniyede binlerce token üretirken bile arayüzü kilitlememesi sağlanmıştır. 
 
-## 📝 Lisans
-Bu proje [MIT Lisansı](LICENSE) ile lisanslanmıştır. Tamamen yerel, tamamen özgür.
+Kod yapısı olabildiğince şeffaf ve sadedir. Fork'layın, parçalayın, kendi zihin sarayınızı inşa edin.
+
+## Lisans
+MIT License.
