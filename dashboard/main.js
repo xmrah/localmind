@@ -294,10 +294,10 @@ function viewTimeline(el) {
     const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
     const sorted = [...memNodes].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    // Tarihe göre grupla
     const groups = {};
     sorted.forEach(n => {
-        const d = n.created_at ? new Date(n.created_at).toLocaleDateString("tr-TR", {day:"numeric",month:"long",year:"numeric"}) : "Bilinmeyen tarih";
+        const isUnknown = !n.created_at || n.created_at.startsWith("1970");
+        const d = isUnknown ? "Bilinmeyen Tarih" : new Date(n.created_at).toLocaleDateString("tr-TR", {day:"numeric",month:"long",year:"numeric"});
         if (!groups[d]) groups[d] = [];
         groups[d].push(n);
     });
