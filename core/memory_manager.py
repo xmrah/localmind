@@ -92,10 +92,16 @@ class MemoryManager:
         conn = sqlite3.connect(GRAPH_DB_PATH)
         fts_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
         conn.close()
-        chroma_count = self.collection.count()
-        if fts_count >= chroma_count:
+        
+        try:
+            unarchived = self.collection.get(where={"archived": "false"}, include=[])
+            unarchived_count = len(unarchived.get("ids", []))
+        except Exception:
+            unarchived_count = self.collection.count()
+            
+        if fts_count >= unarchived_count:
             return
-        log.info(f"FTS5 senkronizasyon: {fts_count}/{chroma_count}")
+        log.info(f"FTS5 senkronizasyon: {fts_count}/{unarchived_count}")
         data = self.collection.get(include=["documents", "metadatas"])
         conn = sqlite3.connect(GRAPH_DB_PATH)
         for i, mem_id in enumerate(data["ids"]):
@@ -185,21 +191,43 @@ class MemoryManager:
         return memories
 
     def get_stats(self) -> dict:
-        """Oda bazlı istatistikler. Entity odası dahil edilmez."""
+        """Oda bazlı istatistikler."""
         memories = self.get_all_memories()
         stats: dict = {}
         for m in memories:
             oda = m.oda.lower()
-            if oda == "entity":  # Entity grafik düğümleri istatistiğe dahil olmaz
-                continue
             stats[oda] = stats.get(oda, 0) + 1
         stats["total"] = len(memories)
         return stats
 
     def get_room_memories(self, oda: str) -> list[Memory]:
         """Belirli bir odanın anılarını döndür."""
-        all_m = self.get_all_memories()
-        return [m for m in all_m if m.oda.lower() == oda.lower()]
+        try:
+            data = self.collection.get(where={"oda": oda}, include=["documents", "metadatas"])
+        except Exception:
+            # Fallback if where filter fails
+            all_m = self.get_all_memories()
+            return [m for m in all_m if m.oda.lower() == oda.lower()]
+            
+        memories = []
+        for i, doc_id in enumerate(data.get("ids", [])):
+            meta = data["metadatas"][i]
+            if meta.get("archived", "false") == "true":
+                continue
+            memories.append(Memory(
+                id=doc_id,
+                konu=meta.get("konu", ""),
+                bilgi=data["documents"][i],
+                oda=meta.get("oda", "genel"),
+                agent_id=meta.get("agent_id", "user"),
+                importance=float(meta.get("importance", 7.0)),
+                access_count=int(meta.get("access_count", 0)),
+                created_at=meta.get("created_at", datetime.now().isoformat()),
+                updated_at=meta.get("updated_at", datetime.now().isoformat()),
+                tags=json.loads(meta.get("tags", "[]")),
+                archived=False
+            ))
+        return memories
 
     def search(self, query: str, n: int = 5, oda: str | None = None) -> list[dict]:
         """Hibrit arama: BM25 keyword (%30) + cosine semantic (%50) + importance decay (%20)."""
@@ -376,7 +404,7 @@ class MemoryManager:
             except Exception:
                 pass
 
-            await asyncio.to_thread(self.collection.update,
+            await asyncio.to_thread(self.collection.upsert,
                 ids=[existing_id],
                 documents=[bilgi],
                 metadatas=[meta]
