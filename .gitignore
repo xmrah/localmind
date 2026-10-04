@@ -7,6 +7,9 @@ result
 result-*
 *.sqlite3
 *.db
+*.db-wal
+*.db-shm
+*.tmp
 chroma_db/
 exports/
 .vscode/

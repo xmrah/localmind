@@ -6,6 +6,7 @@ Mem0 tarzı akıllı upsert + Letta tarzı entity grafiği.
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime
 
@@ -24,8 +25,9 @@ from .models import Memory
 
 log = logging.getLogger("localmind.memory")
 
-DB_PATH = "/home/xmrah/Projects/localmind/chroma_db"
-GRAPH_DB_PATH = "/home/xmrah/Projects/localmind/graph.db"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(PROJECT_ROOT, "chroma_db")
+GRAPH_DB_PATH = os.path.join(PROJECT_ROOT, "graph.db")
 COLLECTION = "zihin_sarayi"
 
 

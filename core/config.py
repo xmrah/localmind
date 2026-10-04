@@ -9,7 +9,8 @@ from typing import Any
 
 log = logging.getLogger("localmind.config")
 
-CONFIG_PATH = "/home/xmrah/Projects/localmind/config.json"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.json")
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "fast_model": "qwen2.5-coder:7b",

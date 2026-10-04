@@ -10,7 +10,9 @@ import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-sys.path.insert(0, "/home/xmrah/Projects/localmind")
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 # LD_LIBRARY_PATH ChromaDB için gerekli
@@ -276,7 +278,8 @@ async def events(request: Request):
 # STATIC FILES — Dashboard
 # ─────────────────────────────────────────────────────────
 
-app.mount("/", StaticFiles(directory="/home/xmrah/Projects/localmind/dashboard", html=True))
+DASHBOARD_DIR = os.path.join(PROJECT_ROOT, "dashboard")
+app.mount("/", StaticFiles(directory=DASHBOARD_DIR, html=True))
 
 
 if __name__ == "__main__":
