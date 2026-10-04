@@ -60,26 +60,33 @@ Zihin Sarayı (Mind Palace)
 Localmind; eşzamanlı MCP istemcileri, yüksek hızlı yerel vektör motoru, WAL modunda çalışan ilişkisel grafik ve D3.js yönetim panelinden oluşur:
 
 ```mermaid
-graph TD
-    subgraph Clients ["İstemciler (Clients)"]
-        C1["Open-WebUI / Web Arayüzü"] -->|HTTP / SSE :8001| R1["FastMCP Streamable Router"]
-        C2["Continue / Antigravity / IDE"] -->|Stdio IPC| R2["FastMCP Stdio Server"]
-        C3["Yönetim Konsolu / Dashboard"] -->|REST API & SSE :8000| S1["FastAPI Server"]
+flowchart TD
+    subgraph Clients ["1. İstemciler ve Ajanlar (Clients)"]
+        direction LR
+        C1["🌐 Open-WebUI<br><i>:8001 HTTP/SSE</i>"]
+        C2["💻 Continue / IDE<br><i>Stdio IPC</i>"]
+        C3["👑 Yönetim Konsolu<br><i>:8000 REST/SSE</i>"]
     end
 
-    subgraph Core ["Çekirdek Motor (Core Engine)"]
-        R1 --> MM["MemoryManager"]
-        R2 --> MM
-        S1 --> MM
-        CFG[("config.json")] <-->|Dinamik Parametreler| MM
-        MM <--> INT["Intelligence Layer"]
+    subgraph Core ["2. Çekirdek Hafıza Motoru (Core Engine)"]
+        CFG[("⚙️ config.json")] <-->|Dinamik Ayarlar| MM["🧠 MemoryManager"]
+        MM <-->|Sınıflandırma & Upsert| INT["💡 Intelligence Layer"]
     end
 
-    subgraph Storage ["Depolama & Yerel Zeka"]
-        MM -->|Vektörler & Metadata| VDB[("ChromaDB: zihin_sarayi")]
-        MM -->|Varlıklar & WAL Grafiği| GDB[("SQLite: graph.db")]
-        INT <-->|Sınıflandırma & Varlık Çıkarımı| OLLAMA["Yerel Ollama :11434"]
+    subgraph Storage ["3. Depolama ve Yerel LLM (Storage & Models)"]
+        direction LR
+        VDB[("📚 ChromaDB<br><i>zihin_sarayi</i>")]
+        GDB[("🕸️ SQLite WAL<br><i>graph.db</i>")]
+        OLLAMA["🤖 Yerel Ollama<br><i>:11434</i>"]
     end
+
+    C1 ==> MM
+    C2 ==> MM
+    C3 ==> MM
+
+    MM -->|Semantik Vektörler| VDB
+    MM -->|Varlık & İlişkiler| GDB
+    INT <-->|LLM Çıkarımı| OLLAMA
 ```
 
 ---
