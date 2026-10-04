@@ -1,808 +1,1021 @@
-/**
- * Localmind Pulse Dashboard — Final Bulletproof Edition
- * Zihin Sarayı: %100 Dinamik, Backend-Bağımsız Keşif
- */
+/* =========================================================
+   Localmind · Zihin Sarayı Paneli  —  main.js
+   Gerçek localmind REST API'sine bağlanır (server_sse.py).
+   Bağımlılık: d3.v7.min.js (yerel). Başka kütüphane yok.
+   ========================================================= */
+(function () {
+  'use strict';
 
-let THRESHOLD = parseFloat(localStorage.getItem("lm_threshold") || "0.45");
-const MAX_DEPTH = 3;
-const COLORS = { center: "#00FFCC", near: "#8A2BE2", far: "rgba(255,255,255,0.15)" };
+  /* ─────────────────────────── CONFIG ─────────────────────────── */
+  const ROOM_META = {
+    mimari:    { label: 'Mimari',     color: '#a855f7', icon: '🏗️' },
+    guvenlik:  { label: 'Güvenlik',   color: '#4d7cff', icon: '🛡️' },
+    donanim:   { label: 'Donanım',    color: '#22e3c0', icon: '🖥️' },
+    ogrenme:   { label: 'Öğrenme',    color: '#f5a524', icon: '📚' },
+    kisisel:   { label: 'Kişisel',    color: '#ec4899', icon: '🧬' },
+    genel:     { label: 'Genel',      color: '#7c86a0', icon: '🗂️' },
+    proje:     { label: 'Proje',      color: '#38bdf8', icon: '🚀' },
+    fikir:     { label: 'Fikir',      color: '#c084fc', icon: '💡' },
+    arastirma: { label: 'Araştırma',  color: '#2dd4bf', icon: '🔬' },
+    saglik:    { label: 'Sağlık',     color: '#4ade80', icon: '❤️' },
+    finans:    { label: 'Finans',     color: '#facc15', icon: '💰' },
+    iletisim:  { label: 'İletişim',   color: '#fb7185', icon: '✉️' },
+  };
+  const FALLBACK = ['#818cf8', '#f472b6', '#34d399', '#fbbf24', '#fb923c', '#60a5fa', '#a78bfa', '#2dd4bf'];
+  const ENTITY_COLOR = '#eab308';
+  const DECAY = 0.99;
 
-// Tema uygula
-function applyTheme(theme) {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("lm_theme", theme);
-}
-applyTheme(localStorage.getItem("lm_theme") || "dark");
+  function roomMeta(name) {
+    const key = (name || 'genel').toLowerCase();
+    if (ROOM_META[key]) return ROOM_META[key];
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    return { label: name || 'Genel', color: FALLBACK[h % FALLBACK.length], icon: '•' };
+  }
 
-const ROOM_CONFIG = {
-    "architecture": { label: "Mimari",    icon: "🏗️", color: "var(--accent-violet)" },
-    "mimari":       { label: "Mimari",    icon: "🏗️", color: "var(--accent-violet)" },
-    "security":     { label: "Güvenlik",  icon: "🛡️", color: "var(--accent-blue)"   },
-    "guvenlik":     { label: "Güvenlik",  icon: "🛡️", color: "var(--accent-blue)"   },
-    "ideas":        { label: "Fikirler",  icon: "💡", color: "var(--accent-purple)" },
-    "fikir":        { label: "Fikirler",  icon: "💡", color: "var(--accent-purple)" },
-    "learning":     { label: "Öğrenme",   icon: "📖", color: "var(--accent-cyan)"   },
-    "ogrenme":      { label: "Öğrenme",   icon: "📖", color: "var(--accent-cyan)"   },
-    "donanim":      { label: "Donanım",   icon: "📱", color: "var(--accent-cyan)"   },
-    "hardware":     { label: "Donanım",   icon: "📱", color: "var(--accent-cyan)"   },
-    "personal":     { label: "Kişisel",   icon: "👤", color: "var(--accent-violet)" },
-    "kisisel":      { label: "Kişisel",   icon: "👤", color: "var(--accent-violet)" },
-    "genel":        { label: "Genel",     icon: "📂", color: "var(--text-dim)"      }
-};
+  /* ─────────────────────────── STATE ─────────────────────────── */
+  const state = {
+    memories: [], links: [], entities: [],
+    rooms: [], profile: null, health: null, reminders: null,
+    loadedAt: 0, loading: null,
+    route: { view: 'overview', param: null },
+    graph: { focus: null, showEntities: true, showSemantic: true },
+    timelineDays: 30,
+  };
 
-let rawGraph = { nodes: [], links: [] };
-let focusNodeId = null;
-let sseStatus = "DISCONNECTED";
-let simulation = null;
+  /* ─────────────────────────── UTILS ─────────────────────────── */
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
-// ═══════════════════════════════════════════════════════
-// AMBIENT PARTICLES
-// ═══════════════════════════════════════════════════════
+  async function api(path, opts) {
+    try {
+      const r = await fetch(path, opts);
+      if (!r.ok) return null;
+      const ct = r.headers.get('content-type') || '';
+      return ct.includes('application/json') ? await r.json() : await r.text();
+    } catch (e) { return null; }
+  }
 
-const canvas = document.getElementById("particles");
-const ctx = canvas.getContext("2d");
-let particles = [];
+  function daysOld(iso) {
+    const t = Date.parse(iso);
+    if (isNaN(t)) return 0;
+    return Math.max(0, (Date.now() - t) / 86400000);
+  }
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '—';
+    return d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+  function fmtDateTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '—';
+    return d.toLocaleString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  function ago(iso) {
+    const d = daysOld(iso);
+    if (d < 1) return 'bugün';
+    if (d < 2) return 'dün';
+    if (d < 30) return Math.floor(d) + ' gün önce';
+    if (d < 365) return Math.floor(d / 30) + ' ay önce';
+    return Math.floor(d / 365) + ' yıl önce';
+  }
+  function liveness(m) { return clamp(m.importance * Math.pow(DECAY, daysOld(m.created_at)), 0, 10); }
+  function forgotten(m) { return Math.max(0, m.importance - liveness(m)); }
 
-function initParticles() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    particles = [];
-    for (let i = 0; i < 40; i++) {
-        particles.push({
-            x: Math.random() * canvas.width, y: Math.random() * canvas.height,
-            r: Math.random() * 1.2 + 0.3, dx: (Math.random() - 0.5) * 0.2, dy: (Math.random() - 0.5) * 0.2,
-            a: Math.random() * 0.3 + 0.1
-        });
-    }
-}
+  let toastTimer;
+  function toast(msg, type = '') {
+    const t = $('#toast');
+    t.textContent = msg; t.className = 'toast ' + type;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.add('hidden'), 3200);
+  }
+  function debounce(fn, ms) { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; }
 
-function drawParticles() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    particles.forEach(p => {
-        p.x += p.dx; p.y += p.dy;
-        if (p.x < 0) p.x = canvas.width; if (p.x > canvas.width) p.x = 0;
-        if (p.y < 0) p.y = canvas.height; if (p.y > canvas.height) p.y = 0;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(138, 43, 226, ${p.a})`; ctx.fill();
+  /* ─────────────────────────── DATA ─────────────────────────── */
+  async function loadCore(force) {
+    if (!force && state.memories.length && Date.now() - state.loadedAt < 30000) return;
+    state.loading = api('/api/graph').then(g => {
+      if (!g) { state.graphError = true; return; }
+      state.graphError = false;
+      const nodes = g.nodes || [];
+      state.memories = nodes.filter(n => n.type === 'memory' && n.oda !== 'entity')
+        .map(n => ({ id: n.id, konu: n.label, bilgi: n.content, oda: n.oda || 'genel',
+                     importance: Number(n.importance) || 7, tags: n.tags || [], created_at: n.created_at || '' }));
+      state.entities = nodes.filter(n => n.type === 'entity');
+      state.links = g.links || [];
+      buildRooms();
+      state.loadedAt = Date.now();
     });
-    requestAnimationFrame(drawParticles);
-}
-initParticles(); drawParticles(); window.addEventListener("resize", initParticles);
+    await state.loading;
+  }
 
-// ═══════════════════════════════════════════════════════
-// DATA LAYER (BACKEND INDEPENDENT)
-// ═══════════════════════════════════════════════════════
+  async function loadHeader() {
+    const [health, profile] = await Promise.all([api('/api/health'), api('/api/profile')]);
+    state.health = health; state.profile = profile;
+    renderHeaderStatus();
+  }
 
-async function api(path) {
-    try { const res = await fetch(path); return res.ok ? await res.json() : null; } catch { return null; }
-}
+  async function loadReminders() {
+    // Opsiyonel /api/reminders varsa kullan, yoksa istemci tarafında türet.
+    const served = await api('/api/reminders?n=12');
+    state.reminders = served && Array.isArray(served) ? served : null;
+  }
 
-async function loadGraphData() {
-    const data = await api("/api/graph");
-    rawGraph = data || { nodes: [], links: [] };
-    if (rawGraph.nodes.length > 0 && !focusNodeId) focusNodeId = rawGraph.nodes[0].id;
-}
-
-function getRoomInfo(key) {
-    const k = key.toLowerCase();
-    return ROOM_CONFIG[k] || { label: key, icon: "📁", color: "var(--text-dim)" };
-}
-
-function parseStatsFromNodes(nodes) {
-    const counts = {};
-    // Entity grafik düğümlerini filtrele — sadece gerçek hafıza anıları
-    const memoryNodes = nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
-    memoryNodes.forEach(n => { const o = (n.oda || "genel").toLowerCase(); counts[o] = (counts[o] || 0) + 1; });
-    const rooms = Object.entries(counts).map(([key, count]) => {
-        const info = getRoomInfo(key);
-        return { key, count, ...info };
+  function buildRooms() {
+    const map = new Map();
+    for (const m of state.memories) {
+      const k = m.oda || 'genel';
+      if (!map.has(k)) map.set(k, { key: k, count: 0, impSum: 0, last: '', newest: 0 });
+      const r = map.get(k); r.count++; r.impSum += m.importance;
+      const t = Date.parse(m.created_at) || 0;
+      if (t >= r.newest) { r.newest = t; r.last = m.created_at; }
+    }
+    state.rooms = Array.from(map.values()).map(r => {
+      const meta = roomMeta(r.key);
+      return { ...r, label: meta.label, color: meta.color, icon: meta.icon, avgImp: r.count ? r.impSum / r.count : 0 };
     }).sort((a, b) => b.count - a.count);
-    return { rooms, total: memoryNodes.length };
-}
+  }
 
-// ═══════════════════════════════════════════════════════
-// SPA ROUTER
-// ═══════════════════════════════════════════════════════
+  /* ─────────────────────────── SSE ─────────────────────────── */
+  function initSSE() {
+    try {
+      const es = new EventSource('/api/events');
+      es.onopen = () => setPulse(true);
+      es.onerror = () => setPulse(false);
+      es.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (d.type === 'pulse') {
+            setPulse(true);
+            $('#headerTotal').textContent = d.total ?? '–';
+            $('#shPulse').textContent = '#' + d.tick;
+            if (state.health) state.health.memories = d.total;
+          }
+        } catch (_) {}
+      };
+    } catch (_) { setPulse(false); }
+  }
+  function setPulse(on) {
+    const dot = $('#pulseDot');
+    dot.className = 'dot ' + (on ? 'pulse' : 'off');
+    $('#pulseText').textContent = on ? 'canlı' : 'kopuk';
+  }
 
-function navigate(view, param) { window.location.hash = param ? `${view}/${param}` : view; }
-window.navigate = navigate;
+  function renderHeaderStatus() {
+    const h = state.health || {};
+    $('#headerTotal').textContent = h.memories ?? state.memories.length ?? 0;
+    const od = $('#ollamaDot');
+    if (h.ollama === true) { od.className = 'dot on'; $('#ollamaText').textContent = 'Ollama'; }
+    else if (h.ollama === false) { od.className = 'dot off'; $('#ollamaText').textContent = 'Ollama kapalı'; }
+    else { od.className = 'dot'; $('#ollamaText').textContent = 'Ollama ?'; }
+    $('#shTotal').textContent = h.memories ?? state.memories.length ?? 0;
+    $('#shRooms').textContent = state.rooms.length;
+    $('#shOllama').textContent = h.ollama === true ? '● hazır' : (h.ollama === false ? '● kapalı' : 'bilinmiyor');
+    $('#shOllama').style.color = h.ollama === true ? 'var(--green)' : (h.ollama === false ? 'var(--red)' : 'var(--text-dim)');
+    $('#shVersion').textContent = h.version || '—';
+  }
 
-function getRoute() {
-    const hash = window.location.hash.replace("#", "") || "home";
-    const parts = hash.split("/");
-    return { view: parts[0], param: decodeURIComponent(parts[1] || "") };
-}
-
-async function router() {
-    const { view, param } = getRoute();
-    document.querySelectorAll(".nav-link").forEach(l => l.classList.toggle("active", l.dataset.view === view));
-    const el = document.getElementById("mainContent");
-    switch (view) {
-        case "home": await viewHome(el); break;
-        case "rooms": await viewRooms(el); break;
-        case "room": await viewRoomDetail(el, param); break;
-        case "timeline": viewTimeline(el); break;
-        case "graph": viewGraph(el); break;
-        case "analytics": await viewAnalytics(el); break;
-        case "settings": await viewSettings(el); break;
-        default: await viewHome(el);
+  /* ─────────────────────────── ROUTER ─────────────────────────── */
+  function navigate(view, param) {
+    const target = param ? `${view}/${encodeURIComponent(param)}` : view;
+    if (window.location.hash === '#' + target) {
+      router();
+    } else {
+      window.location.hash = target;
     }
-}
-window.addEventListener("hashchange", router);
+  }
+  window.navigate = navigate;
 
-// ═══════════════════════════════════════════════════════
-// SIDEBAR
-// ═══════════════════════════════════════════════════════
+  function getRoute() {
+    const h = (window.location.hash || '#overview').slice(1);
+    const [view, param] = h.split('/');
+    return { view: view || 'overview', param: param ? decodeURIComponent(param) : null };
+  }
 
-async function loadSidebar() {
-    if (rawGraph.nodes.length === 0) await loadGraphData();
-    const { rooms, total } = parseStatsFromNodes(rawGraph.nodes);
-    document.getElementById("headerTotal").innerText = total;
-    const nav = document.getElementById("roomNav");
-    nav.innerHTML = rooms.filter(r => r.count > 0).map(r => `
-        <a class="room-link" onclick="navigate('room','${r.key}')">
-            <span>${r.icon}</span> ${r.label} <span class="room-count">${r.count}</span>
-        </a>`).join("");
-}
+  async function router() {
+    state.route = getRoute();
+    const c = $('#content');
+    $$('.nav-link').forEach(a => a.classList.toggle('active', a.dataset.view === state.route.view));
+    $$('.room-link').forEach(a => a.classList.toggle('active', a.dataset.room === state.route.param));
+    $('#sidebar').classList.remove('open');
 
-// ═══════════════════════════════════════════════════════
-// VIEWS
-// ═══════════════════════════════════════════════════════
+    await loadCore();
+    const v = state.route.view;
+    if (v === 'overview') await viewOverview(c);
+    else if (v === 'graph') viewGraph(c);
+    else if (v === 'rooms') viewRooms(c);
+    else if (v === 'room') viewRoomDetail(c, state.route.param);
+    else if (v === 'timeline') viewTimeline(c);
+    else if (v === 'analytics') viewAnalytics(c);
+    else if (v === 'reminders') viewReminders(c);
+    else await viewOverview(c);
+  }
 
-async function viewHome(el) {
-    if (rawGraph.nodes.length === 0) await loadGraphData();
-    const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
-    const { rooms, total } = parseStatsFromNodes(rawGraph.nodes);
-    const activeRooms = rooms.filter(r => r.count > 0);
+  function loadingHTML() { return '<div class="loading-full"><div class="spinner"></div><div>Zihin sarayı yükleniyor…</div></div>'; }
+  function emptyHTML(msg, icon = '🧠') { return `<div class="empty"><div class="em">${icon}</div><div>${esc(msg)}</div></div>`; }
+  function errorHTML() { return `<div class="empty"><div class="em">🔌</div><div>Hafızaya ulaşılamadı.<br><span class="small">Sunucunun (<code>python server_sse.py</code>) çalıştığından emin ol.</span></div></div>`; }
 
-    const linkCount = rawGraph.links.filter(l => {
-        const ids = new Set(memNodes.map(n => n.id));
-        const s = typeof l.source === "object" ? l.source.id : l.source;
-        const t = typeof l.target === "object" ? l.target.id : l.target;
-        return ids.has(s) && ids.has(t);
-    }).length;
+  function viewShell(title, subtitle, controls, inner) {
+    return `<div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${controls || ''}</div>${inner || ''}`;
+  }
 
-    const avgImp = memNodes.length
-        ? (memNodes.reduce((sum, n) => sum + (Number(n.importance) || 0), 0) / memNodes.length).toFixed(1)
-        : 0;
+  /* ─────────────────────────── SIDEBAR ROOMS ─────────────────────────── */
+  function renderRoomNav() {
+    const nav = $('#roomNav');
+    if (!state.rooms.length) { nav.innerHTML = '<div class="muted small">henüz oda yok</div>'; return; }
+    nav.innerHTML = state.rooms.map(r =>
+      `<a class="room-link" data-room="${esc(r.key)}" onclick="navigate('room','${esc(r.key)}')">
+         <span class="rdot" style="background:${r.color}"></span>${esc(r.label)}
+         <span class="rcount">${r.count}</span>
+       </a>`).join('');
+    $$('.room-link').forEach(a => a.classList.toggle('active', a.dataset.room === state.route.param));
+  }
 
-    // Son 7 eklenen anı (created_at'e göre)
-    const recent = [...memNodes]
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-        .slice(0, 7);
+  /* ─────────────────────────── VIEW: OVERVIEW ─────────────────────────── */
+  async function viewOverview(c) {
+    c.innerHTML = loadingHTML();
+    if (state.graphError) { c.innerHTML = errorHTML(); return; }
+    renderRoomNav();
+    await loadReminders();
+    const mem = state.memories;
+    if (!mem.length) { c.innerHTML = viewShell('Genel Bakış', 'Zihin sarayına genel bakış', '', emptyHTML('Henüz hiç anı yok. İlk anını “+ Yeni Anı” ile ekle.', '✨')); return; }
 
-    const impBadge = imp => {
-        const v = Number(imp) || 0;
-        if (v >= 9) return `<span class="imp-badge imp-critical">${v}</span>`;
-        if (v >= 7) return `<span class="imp-badge imp-high">${v}</span>`;
-        if (v >= 4) return `<span class="imp-badge imp-med">${v}</span>`;
-        return `<span class="imp-badge imp-low">${v}</span>`;
-    };
+    const total = mem.length;
+    const roomCount = state.rooms.length;
+    const avgImp = (mem.reduce((a, m) => a + m.importance, 0) / total);
+    const last7 = mem.filter(m => daysOld(m.created_at) <= 7).length;
+    const reminders = state.reminders || deriveReminders();
+    const topRoom = state.rooms[0];
+    const topTags = tagsFrom(mem).slice(0, 8);
+    const recent = [...mem].sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0)).slice(0, 6);
 
-    el.innerHTML = `<div class="view home-dashboard">
+    const donut = donutSVG(state.rooms.map(r => ({ label: r.label, value: r.count, color: r.color })));
 
-        <!-- Arama -->
-        <div class="search-container home-search">
-            <span class="search-icon">🔍</span>
-            <input type="text" class="search-bar" id="searchInput" placeholder="Zihninde ara...">
-            <div class="search-results" id="searchResults"></div>
+    c.innerHTML = viewShell('Genel Bakış', 'Zihin sarayının anlık durumu ve öne çıkanlar', '') + `
+      <div class="grid cols-kpi" style="margin-bottom:16px">
+        ${kpi('Toplam Anı', total, `${roomCount} odaya dağılmış`, 'var(--violet)')}
+        ${kpi('Ortalama Önem', avgImp.toFixed(1), '10 üzerinden', 'var(--amber)')}
+        ${kpi('Son 7 Gün', last7, 'yeni anı eklendi', 'var(--cyan)')}
+        ${kpi('Hatırlatma', reminders.length, 'unutulmaya yüz tutan', 'var(--pink)')}
+        ${kpi('En Aktif Oda', topRoom ? topRoom.label : '–', topRoom ? topRoom.count + ' anı' : '', 'var(--blue)')}
+      </div>
+
+      <div class="grid cols-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); margin-bottom:16px">
+        <div class="card">
+          <h3>🗂️ Oda Dağılımı <span class="sub">${roomCount} oda</span></h3>
+          ${donut.html}
         </div>
-
-        <!-- İstatistik satırı -->
-        <div class="stats-row">
-            <div class="stat-card"><div class="stat-val">${total}</div><div class="stat-lbl">Toplam Anı</div></div>
-            <div class="stat-card"><div class="stat-val">${activeRooms.length}</div><div class="stat-lbl">Oda</div></div>
-            <div class="stat-card"><div class="stat-val">${avgImp}</div><div class="stat-lbl">Ort. Önem</div></div>
-            <div class="stat-card"><div class="stat-val">${linkCount}</div><div class="stat-lbl">Bağlantı</div></div>
+        <div class="card">
+          <h3>🏷️ Öne Çıkan Etiketler <span class="sub">anı sayısına göre</span></h3>
+          ${topTags.length ? topTags.map(t => barRow(t.tag, t.count, topTags[0].count, 'var(--cyan)')).join('') : '<div class="muted small">henüz etiket yok</div>'}
+          <div style="margin-top:14px">
+            <h3 style="margin-bottom:10px">🔔 Hatırlatılması Gerekenler</h3>
+            ${reminders.length ? reminders.slice(0, 4).map(r => miniReminder(r)).join('') : '<div class="muted small">harika — bekleyen hatırlatma yok</div>'}
+          </div>
         </div>
+      </div>
 
-        <!-- Alt iki kolon -->
-        <div class="home-cols">
-            <!-- Sol: Son anılar -->
-            <div class="home-recent">
-                <div class="home-col-title">SON EKLENEN ANILAR</div>
-                ${recent.length === 0
-                    ? `<div class="empty-state">Henüz anı yok.</div>`
-                    : recent.map(m => {
-                        const info = getRoomInfo(m.oda || "genel");
-                        const payload = JSON.stringify({label:m.label,oda:m.oda,content:m.content,tags:m.tags,importance:m.importance,created_at:m.created_at}).replace(/'/g,"&#39;");
-                        return `<div class="recent-item" onclick='openMemory(${payload})'>
-                            <div class="recent-dot" style="background:${info.color}"></div>
-                            <div class="recent-body">
-                                <div class="recent-title">${m.label}</div>
-                                <div class="recent-meta">
-                                    <span class="tl-room">${info.icon} ${info.label}</span>
-                                    ${impBadge(m.importance)}
-                                </div>
-                            </div>
-                        </div>`;
-                    }).join("")}
-                <div class="home-more" onclick="navigate('timeline')">Tümünü gör →</div>
-            </div>
-
-            <!-- Sağ: Odalar -->
-            <div class="home-rooms-col">
-                <div class="home-col-title">ODALAR</div>
-                ${activeRooms.map(r => `
-                    <div class="home-room-row" onclick="navigate('room','${r.key}')">
-                        <span class="home-room-icon">${r.icon}</span>
-                        <span class="home-room-name">${r.label}</span>
-                        <span class="home-room-count">${r.count}</span>
-                    </div>`).join("")}
-                <div class="home-more" onclick="navigate('graph')">Zihin haritası →</div>
-            </div>
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>🆕 Son Eklenen Anılar <span class="sub">en yeni 6</span></h3>
+          <div class="mem-list">${recent.map(m => memItem(m)).join('')}</div>
         </div>
+        <div class="card">
+          <h3>🕸️ En Bağlantılı Anılar <span class="sub">semantik + varlık</span></h3>
+          ${topConnected().map(x => memItem(x.m)).join('') || '<div class="muted small">bağlantı verisi yok</div>'}
+        </div>
+      </div>`;
+
+    bindMemItems(c);
+    bindReminderItems(c);
+  }
+
+  function kpi(label, value, sub, color) {
+    return `<div class="card kpi"><div class="kpi-accent" style="background:${color}"></div>
+      <div class="kpi-label">${esc(label)}</div>
+      <div class="kpi-value" style="color:${color}">${esc(value)}</div>
+      ${sub ? `<div class="kpi-sub">${esc(sub)}</div>` : ''}</div>`;
+  }
+  function barRow(label, value, max, color) {
+    const w = max ? clamp(value / max * 100, 3, 100) : 0;
+    return `<div class="bar-row"><span class="bl" title="${esc(label)}">${esc(label)}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${w}%;background:${color}"></span></span>
+      <span class="bv">${value}</span></div>`;
+  }
+
+  /* ─────────────────────────── VIEW: GRAPH ─────────────────────────── */
+  function viewGraph(c) {
+    if (state.graphError) { c.innerHTML = errorHTML(); return; }
+    if (!window.d3) {
+      c.innerHTML = viewShell('Bilgi Grafiği', 'Zihin sarayının ilişki ağı', '') +
+        emptyHTML('Grafik motoru (d3.v7.min.js) bulunamadı. Dosyayı dashboard/ klasörüne koy.', '🕸️');
+      return;
+    }
+    const rooms = state.rooms;
+    const controls = `<div class="controls" style="margin:0">
+      <select class="field" id="gRoom"><option value="">Tüm odalar</option>${rooms.map(r => `<option value="${esc(r.key)}">${esc(r.label)} (${r.count})</option>`).join('')}</select>
+      <label class="switch"><input type="checkbox" id="gEntities" ${state.graph.showEntities ? 'checked' : ''}/><span class="track"></span>Varlıkları göster</label>
+      <label class="switch"><input type="checkbox" id="gSemantic" ${state.graph.showSemantic ? 'checked' : ''}/><span class="track"></span>Anlamsal bağlar</label>
+      <button class="btn small" id="gReheat">↻ Yeniden düzenle</button>
     </div>`;
-    initSearch();
-}
-
-function viewGraph(el) {
-    const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
-    const linkCount = rawGraph.links.filter(l => {
-        const ids = new Set(memNodes.map(n => n.id));
-        const s = typeof l.source === "object" ? l.source.id : l.source;
-        const t = typeof l.target === "object" ? l.target.id : l.target;
-        return ids.has(s) && ids.has(t);
-    }).length;
-
-    el.innerHTML = `<div class="view graph-page">
-        <div class="graph-page-header">
-            <span class="graph-title">ZİHİN HARİTASI</span>
-            <span class="graph-subtitle" id="graphSubtitle">${memNodes.length} anı · ${linkCount} bağlantı</span>
-        </div>
+    c.innerHTML = viewShell('Bilgi Grafiği', 'Anılar, kavramlar, kişiler ve teknolojiler arasındaki bağlar', controls) + `
+      <div class="graph-wrap">
         <div id="graphArea"></div>
-    </div>`;
-    renderGraph();
-}
+        <div class="graph-hint">Tekerle: yakınlaştır · Sürükle: taşı · Düğüme tıkla: detay</div>
+        <div class="graph-legend" id="graphLegend"></div>
+      </div>`;
 
-
-async function viewRooms(el) {
-    const { rooms } = parseStatsFromNodes(rawGraph.nodes);
-    el.innerHTML = `<div class="view"><h1 class="section-title">🚪 Hafıza Odaları</h1><div class="cards-grid">
-        ${rooms.map(r => `<div class="room-card" onclick="navigate('room','${r.key}')" style="border-left:3px solid ${r.color}">
-            <span style="font-size:2rem">${r.icon}</span><h3>${r.label}</h3><div class="room-stat">${r.count}</div></div>`).join("")}
-    </div></div>`;
-}
-
-async function viewRoomDetail(el, roomKey) {
-    const info = getRoomInfo(roomKey);
-    el.innerHTML = `<div class="view">
-        <div class="breadcrumb"><a href="#rooms">Odalar</a> / <strong>${info.label}</strong></div>
-        <h1 class="section-title">${info.label} Odası</h1>
-        <div class="memory-list" id="roomMemoryList"><div style="color:var(--text-dim);padding:20px">Yükleniyor…</div></div>
-    </div>`;
-    const memories = await api(`/api/room/${encodeURIComponent(roomKey)}`) || [];
-    const list = document.getElementById("roomMemoryList");
-    if (!list) return;
-    if (memories.length === 0) {
-        list.innerHTML = `<div style="color:var(--text-dim);padding:20px">Bu odada henüz anı yok.</div>`;
-        return;
-    }
-    list.innerHTML = memories.map(m => {
-        const dateStr = m.created_at ? new Date(m.created_at).toLocaleDateString("tr-TR") : "";
-        const tags = (m.tags || []).map(t => `<span class="memory-tag">${t}</span>`).join("");
-        const payload = JSON.stringify({label: m.konu, oda: m.oda, content: m.content, tags: m.tags, importance: m.importance, created_at: m.created_at}).replace(/'/g,"&#39;");
-        return `<div class="memory-item" onclick='openMemory(${payload})'>
-            <h4>${m.konu}</h4>
-            <p>${(m.content||"").substring(0,200)}${m.content && m.content.length > 200 ? "…" : ""}</p>
-            ${tags || dateStr ? `<div class="memory-meta">${tags}${dateStr ? `<span class="memory-tag" style="margin-left:auto;background:rgba(77,124,255,0.1);color:var(--accent-blue)">${dateStr}</span>` : ""}</div>` : ""}
-        </div>`;
-    }).join("");
-}
-
-function viewTimeline(el) {
-    const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
-    const sorted = [...memNodes].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-    const groups = {};
-    sorted.forEach(n => {
-        const isUnknown = !n.created_at || n.created_at.startsWith("1970");
-        const d = isUnknown ? "Bilinmeyen Tarih" : new Date(n.created_at).toLocaleDateString("tr-TR", {day:"numeric",month:"long",year:"numeric"});
-        if (!groups[d]) groups[d] = [];
-        groups[d].push(n);
-    });
-
-    const impBadge = imp => {
-        const v = Number(imp) || 0;
-        if (v >= 9) return `<span class="imp-badge imp-critical">${v}</span>`;
-        if (v >= 7) return `<span class="imp-badge imp-high">${v}</span>`;
-        if (v >= 4) return `<span class="imp-badge imp-med">${v}</span>`;
-        return `<span class="imp-badge imp-low">${v}</span>`;
+    const rerender = () => {
+      state.graph.showEntities = $('#gEntities').checked;
+      state.graph.showSemantic = $('#gSemantic').checked;
+      state.graph.roomFilter = $('#gRoom').value;
+      renderGraph();
     };
+    $('#gRoom').onchange = rerender;
+    $('#gEntities').onchange = rerender;
+    $('#gSemantic').onchange = rerender;
+    $('#gReheat').onclick = () => renderGraph(true);
+    renderGraph(true);
+  }
 
-    const rows = Object.entries(groups).map(([date, mems]) => `
-        <div class="tl-group">
-            <div class="tl-date">${date}</div>
-            <div class="tl-items">
-                ${mems.map(m => {
-                    const info = getRoomInfo(m.oda || "genel");
-                    const payload = JSON.stringify({label:m.label,oda:m.oda,content:m.content,tags:m.tags,importance:m.importance,created_at:m.created_at}).replace(/'/g,"&#39;");
-                    return `<div class="tl-item" onclick='openMemory(${payload})'>
-                        <div class="tl-dot" style="background:${info.color}"></div>
-                        <div class="tl-body">
-                            <div class="tl-title">${m.label}</div>
-                            <div class="tl-meta">
-                                <span class="tl-room">${info.icon} ${info.label}</span>
-                                ${impBadge(m.importance)}
-                            </div>
-                        </div>
-                    </div>`;
-                }).join("")}
-            </div>
-        </div>`).join("");
+  let graphSim = null;
+  function renderGraph(reheat) {
+    const area = $('#graphArea'); if (!area) return;
+    const W = area.clientWidth || 800, H = area.clientHeight || 520;
+    const roomFilter = state.graph.roomFilter || '';
+    area.innerHTML = '';
+    if (graphSim) { graphSim.stop(); graphSim = null; }
 
-    el.innerHTML = `<div class="view">
-        <h1 class="section-title">📅 Hafıza Zaman Çizelgesi</h1>
-        ${sorted.length === 0
-            ? `<div class="empty-state">Henüz kayıtlı anı yok.</div>`
-            : `<div class="timeline">${rows}</div>`}
-    </div>`;
-}
+    let mem = state.memories;
+    if (roomFilter) mem = mem.filter(m => (m.oda || 'genel') === roomFilter);
+    const memIds = new Set(mem.map(m => m.id));
 
-async function viewAnalytics(el) {
-    const memNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
-    const { rooms, total } = parseStatsFromNodes(rawGraph.nodes);
-    const linkCount = rawGraph.links.filter(l => {
-        const ids = new Set(memNodes.map(n => n.id));
-        const s = typeof l.source === "object" ? l.source.id : l.source;
-        const t = typeof l.target === "object" ? l.target.id : l.target;
-        return ids.has(s) && ids.has(t);
-    }).length;
-
-    const avgImp = memNodes.length
-        ? (memNodes.reduce((sum, n) => sum + (Number(n.importance) || 0), 0) / memNodes.length).toFixed(1)
-        : 0;
-
-    // Top 5 by importance
-    const top5 = [...memNodes].sort((a, b) => (Number(b.importance)||0) - (Number(a.importance)||0)).slice(0, 5);
-
-    // Importance bands
-    const bands = {low:0, med:0, high:0, critical:0};
-    memNodes.forEach(n => {
-        const v = Number(n.importance) || 0;
-        if (v >= 9) bands.critical++;
-        else if (v >= 7) bands.high++;
-        else if (v >= 4) bands.med++;
-        else bands.low++;
-    });
-    const bandMax = Math.max(...Object.values(bands), 1);
-
-    el.innerHTML = `<div class="view">
-        <h1 class="section-title">📊 Analitik</h1>
-
-        <!-- Özet satırı -->
-        <div class="stats-row">
-            <div class="stat-card"><div class="stat-val">${total}</div><div class="stat-lbl">Toplam Anı</div></div>
-            <div class="stat-card"><div class="stat-val">${rooms.length}</div><div class="stat-lbl">Oda</div></div>
-            <div class="stat-card"><div class="stat-val">${avgImp}</div><div class="stat-lbl">Ort. Önem</div></div>
-            <div class="stat-card"><div class="stat-val">${linkCount}</div><div class="stat-lbl">Bağlantı</div></div>
-        </div>
-
-        <div class="analytics-grid">
-            <!-- Oda dağılımı -->
-            <div class="analytics-card">
-                <h3>ODA DAĞILIMI</h3>
-                <div class="bar-chart">${rooms.map(r => `
-                    <div class="bar-row">
-                        <span class="bar-label">${r.label}</span>
-                        <div class="bar-track"><div class="bar-fill" style="width:${total>0?(r.count/total)*100:0}%;background:${r.color}"></div></div>
-                        <span class="bar-value">${r.count}</span>
-                    </div>`).join("")}
-                </div>
-            </div>
-
-            <!-- Top 5 anı -->
-            <div class="analytics-card">
-                <h3>EN ÖNEMLİ 5 ANI</h3>
-                <div class="top-list">
-                    ${top5.map((m, i) => {
-                        const info = getRoomInfo(m.oda || "genel");
-                        const payload = JSON.stringify({label:m.label,oda:m.oda,content:m.content,tags:m.tags,importance:m.importance,created_at:m.created_at}).replace(/'/g,"&#39;");
-                        return `<div class="top-item" onclick='openMemory(${payload})'>
-                            <span class="top-rank">#${i+1}</span>
-                            <div class="top-info">
-                                <div class="top-title">${m.label}</div>
-                                <div class="top-room">${info.icon} ${info.label}</div>
-                            </div>
-                            <span class="top-imp" style="color:${info.color}">${Number(m.importance)||0}</span>
-                        </div>`;
-                    }).join("")}
-                </div>
-            </div>
-
-            <!-- Önem dağılımı -->
-            <div class="analytics-card">
-                <h3>ÖNEM DAĞILIMI</h3>
-                <div class="bar-chart">
-                    <div class="bar-row"><span class="bar-label imp-label-critical">Kritik 9-10</span><div class="bar-track"><div class="bar-fill" style="width:${(bands.critical/bandMax)*100}%;background:#ef4444"></div></div><span class="bar-value">${bands.critical}</span></div>
-                    <div class="bar-row"><span class="bar-label imp-label-high">Yüksek 7-8</span><div class="bar-track"><div class="bar-fill" style="width:${(bands.high/bandMax)*100}%;background:#f59e0b"></div></div><span class="bar-value">${bands.high}</span></div>
-                    <div class="bar-row"><span class="bar-label imp-label-med">Orta 4-6</span><div class="bar-track"><div class="bar-fill" style="width:${(bands.med/bandMax)*100}%;background:#4d7cff"></div></div><span class="bar-value">${bands.med}</span></div>
-                    <div class="bar-row"><span class="bar-label imp-label-low">Düşük 1-3</span><div class="bar-track"><div class="bar-fill" style="width:${(bands.low/bandMax)*100}%;background:#64748b"></div></div><span class="bar-value">${bands.low}</span></div>
-                </div>
-            </div>
-        </div>
-    </div>`;
-}
-
-async function viewSettings(el) {
-    el.innerHTML = `<div class="view"><div style="color:var(--text-dim);padding:20px">Yükleniyor…</div></div>`;
-    const [health, profile] = await Promise.all([api("/api/health"), api("/api/profile")]);
-    const h = health || {};
-    const currentTheme = localStorage.getItem("lm_theme") || "dark";
-    const currentRoom = localStorage.getItem("lm_default_room") || "";
-    const { rooms } = parseStatsFromNodes(rawGraph.nodes);
-
-    el.innerHTML = `<div class="view">
-        <h1 class="section-title">⚙️ Ayarlar</h1>
-
-        <!-- Görünüm -->
-        <div class="settings-group">
-            <h3>GÖRÜNÜM</h3>
-            <div class="setting-row">
-                <div>
-                    <span class="setting-label">Tema</span>
-                    <div class="setting-desc">Arayüz renk teması</div>
-                </div>
-                <div class="theme-toggle">
-                    <button class="theme-btn ${currentTheme==='dark'?'active':''}" onclick="setTheme('dark')">🌙 Koyu</button>
-                    <button class="theme-btn ${currentTheme==='light'?'active':''}" onclick="setTheme('light')">☀️ Açık</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Graf -->
-        <div class="settings-group">
-            <h3>GRAFİK</h3>
-            <div class="setting-row">
-                <div>
-                    <span class="setting-label">Benzerlik eşiği</span>
-                    <div class="setting-desc">Düğümler arası bağlantı hassasiyeti — düşük: daha fazla bağlantı</div>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="thresholdSlider" min="0.3" max="0.8" step="0.05" value="${THRESHOLD}">
-                    <span class="slider-val" id="thresholdVal">${THRESHOLD}</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Hafıza tercihleri -->
-        <div class="settings-group">
-            <h3>HAFIZA TERCİHLERİ</h3>
-            <div class="setting-row">
-                <div>
-                    <span class="setting-label">Varsayılan oda</span>
-                    <div class="setting-desc">Yeni anı eklerken önceden seçili oda</div>
-                </div>
-                <select class="setting-select" id="defaultRoomSelect" onchange="saveDefaultRoom(this.value)">
-                    <option value="">— Seçiniz —</option>
-                    ${rooms.map(r => `<option value="${r.key}" ${currentRoom===r.key?'selected':''}>${r.icon} ${r.label}</option>`).join("")}
-                </select>
-            </div>
-        </div>
-
-        <!-- Dışa aktarma -->
-        <div class="settings-group">
-            <h3>VERİ</h3>
-            <div class="setting-row">
-                <div>
-                    <span class="setting-label">Dışa aktar</span>
-                    <div class="setting-desc">Tüm anıları JSON olarak indir</div>
-                </div>
-                <button class="export-btn" onclick="exportMemories()">⬇ JSON İndir</button>
-            </div>
-        </div>
-
-        <!-- Sistem durumu (bilgi) -->
-        <div class="settings-group">
-            <h3>SİSTEM DURUMU</h3>
-            <div class="setting-row"><span class="setting-label">Servis</span><span class="setting-value ${h.status==='ok'?'status-ok':'status-err'}">${h.status==='ok'?'● Aktif':'● Hata'}</span></div>
-            <div class="setting-row"><span class="setting-label">Ollama</span><span class="setting-value ${h.ollama?'status-ok':'status-err'}">${h.ollama?'● Bağlı':'● Bağlı değil'}</span></div>
-            <div class="setting-row"><span class="setting-label">Versiyon</span><span class="setting-value">${h.version||'—'}</span></div>
-            <div class="setting-row"><span class="setting-label">Toplam anı</span><span class="setting-value">${h.memories??'—'}</span></div>
-            <div class="setting-row"><span class="setting-label">Son güncelleme</span><span class="setting-value">${h.timestamp?new Date(h.timestamp).toLocaleString("tr-TR"):'—'}</span></div>
-        </div>
-    </div>`;
-
-    // Slider event
-    const slider = document.getElementById("thresholdSlider");
-    const valEl = document.getElementById("thresholdVal");
-    slider?.addEventListener("input", () => {
-        valEl.textContent = slider.value;
-        THRESHOLD = parseFloat(slider.value);
-        localStorage.setItem("lm_threshold", slider.value);
-    });
-}
-
-window.setTheme = theme => {
-    applyTheme(theme);
-    // Butonları güncelle
-    document.querySelectorAll(".theme-btn").forEach(b => {
-        b.classList.toggle("active", b.textContent.includes(theme === "dark" ? "Koyu" : "Açık"));
-    });
-};
-
-window.saveDefaultRoom = val => localStorage.setItem("lm_default_room", val);
-
-window.exportMemories = async () => {
-    const data = await api("/api/graph");
-    if (!data) return;
-    const memories = (data.nodes || []).filter(n => n.type !== "entity");
-    const blob = new Blob([JSON.stringify(memories, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `localmind-export-${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-};
-
-// ═══════════════════════════════════════════════════════
-// UTILS
-// ═══════════════════════════════════════════════════════
-
-function initSearch() {
-    const input = document.getElementById("searchInput");
-    const box = document.getElementById("searchResults");
-    let _searchTimer = null;
-    input?.addEventListener("input", () => {
-        const q = input.value.trim();
-        if (q.length < 2) return box.classList.remove("active");
-        clearTimeout(_searchTimer);
-        _searchTimer = setTimeout(async () => {
-            const results = await api(`/api/search?q=${encodeURIComponent(q)}&n=5`) || [];
-            box.innerHTML = results.map(m => `<div class="search-result-item" onclick='openMemory(${JSON.stringify({label:m.konu,oda:m.oda,content:m.content,tags:m.tags,importance:m.importance,created_at:m.created_at}).replace(/'/g,"&#39;")})'>
-                <h4>${m.konu}</h4><p>${(m.content||"").substring(0,80)}…</p></div>`).join("");
-            box.classList.toggle("active", results.length > 0);
-        }, 300);
-    });
-}
-
-function renderGraph() {
-    const area = document.getElementById("graphArea"); if (!area) return;
-    const w = area.clientWidth || 700;
-    const h = area.clientHeight || 600;
-    area.innerHTML = "";
-
-    const allNodes = rawGraph.nodes.filter(n => n.type !== "entity" && n.oda !== "entity");
-    const nodeIds = new Set(allNodes.map(n => n.id));
-    const allLinks = rawGraph.links.filter(l => {
-        const s = typeof l.source === "object" ? l.source.id : l.source;
-        const t = typeof l.target === "object" ? l.target.id : l.target;
-        return nodeIds.has(s) && nodeIds.has(t);
-    });
-
-    if (allNodes.length === 0) {
-        area.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);font-size:0.9rem;flex-direction:column;gap:12px"><span style="font-size:2rem">🧠</span>Henüz hafıza anısı yok</div>';
-        return;
-    }
-
-    const odaColor = {
-        mimari:"#a855f7", guvenlik:"#4d7cff", donanim:"#00FFCC",
-        ogrenme:"#f59e0b", kisisel:"#ec4899", genel:"#64748b"
-    };
-    const getColor = oda => odaColor[(oda||"genel").toLowerCase()] || "#64748b";
-
-    // Focus: hangi nodelar bağlı?
-    const focusNeighbors = new Set();
-    if (focusNodeId) {
-        focusNeighbors.add(focusNodeId);
-        allLinks.forEach(l => {
-            const s = typeof l.source === "object" ? l.source.id : l.source;
-            const t = typeof l.target === "object" ? l.target.id : l.target;
-            if (s === focusNodeId) focusNeighbors.add(t);
-            if (t === focusNodeId) focusNeighbors.add(s);
-        });
-    }
-    const hasFocus = focusNodeId && focusNeighbors.size > 0;
-
-    const svg = d3.select("#graphArea").append("svg")
-        .attr("width", w).attr("height", h)
-        .style("background", "radial-gradient(ellipse at 50% 40%, rgba(138,43,226,0.07) 0%, rgba(5,5,8,0) 65%)")
-        .call(d3.zoom().scaleExtent([0.2, 4]).on("zoom", e => g.attr("transform", e.transform)));
-
-    // SVG Defs: glow filtresi + gradient
-    const defs = svg.append("defs");
-    ["violet","cyan","blue","amber","pink"].forEach((name, i) => {
-        const cols = ["#a855f7","#00FFCC","#4d7cff","#f59e0b","#ec4899"];
-        const filt = defs.append("filter").attr("id", `glow-${name}`).attr("x","-50%").attr("y","-50%").attr("width","200%").attr("height","200%");
-        filt.append("feGaussianBlur").attr("stdDeviation","5").attr("result","blur");
-        const fm = filt.append("feMerge");
-        fm.append("feMergeNode").attr("in","blur");
-        fm.append("feMergeNode").attr("in","SourceGraphic");
-    });
-
-    const glowId = oda => {
-        const m = {mimari:"violet", guvenlik:"blue", donanim:"cyan", ogrenme:"amber", kisisel:"pink"};
-        return `glow-${m[(oda||"genel").toLowerCase()] || "violet"}`;
-    };
-
-    const g = svg.append("g");
-
-    // Düğüm kopyaları (D3 mutate eder)
-    const nodes = allNodes.map(n => ({...n}));
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    const links = allLinks.map(l => ({
-        source: typeof l.source === "object" ? l.source.id : l.source,
-        target: typeof l.target === "object" ? l.target.id : l.target,
-        value: l.value || 0.5
+    const nodes = mem.map(m => ({
+      id: m.id, label: m.konu, oda: m.oda || 'genel', importance: m.importance,
+      content: m.bilgi, tags: m.tags, created_at: m.created_at, type: 'memory',
+      r: 6 + clamp(m.importance, 1, 10) * 0.8,
     }));
 
-    simulation = d3.forceSimulation(nodes)
-        .force("link", d3.forceLink(links).id(d => d.id).distance(d => hasFocus && focusNeighbors.has(d.source.id||d.source) ? 120 : 160))
-        .force("charge", d3.forceManyBody().strength(-450))
-        .force("center", d3.forceCenter(w/2, h/2))
-        .force("collision", d3.forceCollide(d => d.id === focusNodeId ? 80 : 55));
+    let links = [];
+    const rawLinks = (state.links || []).map(l => ({ ...l, source: typeof l.source === 'object' ? l.source.id : l.source, target: typeof l.target === 'object' ? l.target.id : l.target }));
+    if (state.graph.showSemantic) links.push(...rawLinks.filter(l => l.type !== 'entity' && memIds.has(l.source) && memIds.has(l.target)));
 
-    // Bağlantı çizgileri
-    const link = g.selectAll(".gl").data(links).join("line").attr("class","gl")
-        .attr("stroke", d => {
-            if (!hasFocus) return getColor(nodeMap.get(d.source)?.oda || "genel");
-            const active = focusNeighbors.has(d.source) && focusNeighbors.has(d.target);
-            return active ? getColor(nodeMap.get(d.source)?.oda || "genel") : "rgba(100,100,120,0.1)";
-        })
-        .attr("stroke-opacity", d => {
-            if (!hasFocus) return 0.45;
-            return (focusNeighbors.has(d.source) && focusNeighbors.has(d.target)) ? 0.75 : 0.08;
-        })
-        .attr("stroke-width", d => {
-            if (!hasFocus) return Math.max(1.5, d.value * 3);
-            return (focusNeighbors.has(d.source) && focusNeighbors.has(d.target)) ? Math.max(2, d.value * 4) : 0.5;
-        });
+    if (state.graph.showEntities) {
+      const entityNodes = new Map(); // name -> node
+      for (const l of rawLinks) {
+        if (l.type !== 'entity') continue;
+        const srcLocal = memIds.has(l.source) ? l.source : null;
+        const tgtName = String(l.target).startsWith('entity_') ? String(l.target).slice(7) : l.target;
+        const tgtId = 'entity_' + tgtName;
+        if (!entityNodes.has(tgtId)) entityNodes.set(tgtId, { id: tgtId, label: tgtName, oda: 'entity', type: 'entity', r: 8 });
+        if (srcLocal) links.push({ source: srcLocal, target: tgtId, value: 0.7, type: 'entity', label: l.label || '' });
+      }
+      const usedEntities = new Set(links.filter(l => l.type === 'entity').map(l => typeof l.target === 'object' ? l.target.id : l.target));
+      nodes.push(...Array.from(entityNodes.values()).filter(e => usedEntities.has(e.id)));
+    }
 
-    // Düğüm grupları
-    const nodeG = g.selectAll(".gn").data(nodes).join("g").attr("class","gn")
-        .style("cursor","pointer")
-        .on("click", (e, d) => {
-            e.stopPropagation();
-            if (focusNodeId === d.id) { focusNodeId = null; } // ikinci tıkta focus kaldır
-            else { focusNodeId = d.id; openMemory(d); }
-            renderGraph();
-        })
-        .call(d3.drag()
-            .on("start",(e,d)=>{if(!e.active)simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;})
-            .on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;})
-            .on("end",(e,d)=>{if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null;}));
+    const legend = $('#graphLegend');
+    if (legend) legend.innerHTML = state.rooms.map(r => `<span class="lg"><i style="background:${r.color}"></i>${esc(r.label)}</span>`).join('') +
+      (state.graph.showEntities ? `<span class="lg"><i style="background:${ENTITY_COLOR};border-radius:2px"></i>Varlık</span>` : '');
 
-    // Focus dışı düğümleri soldur
-    const nodeOpacity = d => {
-        if (!hasFocus) return 1;
-        return focusNeighbors.has(d.id) ? 1 : 0.18;
-    };
+    if (!nodes.length) { area.innerHTML = emptyHTML('Bu filtrede gösterilecek anı yok.', '🕸️'); return; }
 
-    // Glow hale
-    nodeG.append("circle")
-        .attr("r", d => d.id===focusNodeId ? 42 : (hasFocus && focusNeighbors.has(d.id) ? 28 : 22))
-        .attr("fill", d => getColor(d.oda))
-        .attr("opacity", d => {
-            if (!hasFocus) return 0.07;
-            return d.id===focusNodeId ? 0.25 : (focusNeighbors.has(d.id) ? 0.12 : 0.02);
-        })
-        .attr("filter", d => `url(#${glowId(d.oda)})`);
+    const svg = d3.select(area).append('svg').attr('width', W).attr('height', H);
+    const g = svg.append('g');
+    svg.call(d3.zoom().scaleExtent([0.15, 4]).on('zoom', e => g.attr('transform', e.transform)));
 
-    // Ana daire
-    nodeG.append("circle")
-        .attr("r", d => d.id===focusNodeId ? 22 : (hasFocus && focusNeighbors.has(d.id) ? 16 : 13))
-        .attr("fill", d => getColor(d.oda))
-        .attr("opacity", d => nodeOpacity(d) * 0.92)
-        .attr("stroke", d => d.id===focusNodeId ? "rgba(255,255,255,0.7)" : (hasFocus && focusNeighbors.has(d.id) ? "rgba(255,255,255,0.3)" : "transparent"))
-        .attr("stroke-width", 1.5)
-        .attr("filter", d => d.id===focusNodeId || (hasFocus && focusNeighbors.has(d.id)) ? `url(#${glowId(d.oda)})` : "none");
+    const nodeList = nodes.map(n => ({ ...n }));
+    const byId = new Map(nodeList.map(n => [n.id, n]));
+    const linkList = links.map(l => ({ ...l })).filter(l => byId.has(l.source) && byId.has(l.target));
 
-    // Oda baş harfi
-    nodeG.append("text")
-        .attr("text-anchor","middle").attr("dominant-baseline","central")
-        .attr("font-size", d => d.id===focusNodeId ? "13px" : "9px")
-        .attr("font-weight","700")
-        .attr("fill", d => `rgba(255,255,255,${nodeOpacity(d) > 0.5 ? 0.9 : 0.2})`)
-        .attr("pointer-events","none")
-        .text(d => (d.oda||"G").charAt(0).toUpperCase());
+    const focus = state.graph.focus;
+    const nb = new Set();
+    if (focus) { nb.add(focus); linkList.forEach(l => { if (l.source === focus) nb.add(l.target); if (l.target === focus) nb.add(l.source); }); }
+    const hasFocus = focus && nb.size > 1;
 
-    // Etiket arka planı
-    const labelPad = 6;
-    const maxChars = d => d.id===focusNodeId ? 30 : 22;
-
-    nodeG.append("rect")
-        .attr("x", d => d.id===focusNodeId ? 26 : 18)
-        .attr("y", -9)
-        .attr("width", d => Math.min(d.label.length, maxChars(d)) * (d.id===focusNodeId ? 7.5 : 6.2) + labelPad*2)
-        .attr("height", 18).attr("rx", 5)
-        .attr("fill","rgba(5,5,12,0.82)")
-        .attr("stroke", d => getColor(d.oda))
-        .attr("stroke-width", 0.6)
-        .attr("opacity", d => nodeOpacity(d));
-
-    // Etiket metni
-    nodeG.append("text")
-        .attr("x", d => d.id===focusNodeId ? 32 : 24)
-        .attr("y", 4)
-        .attr("font-size", d => d.id===focusNodeId ? "11.5px" : "10px")
-        .attr("fill", d => {
-            if (d.id===focusNodeId) return "#fff";
-            if (!hasFocus || focusNeighbors.has(d.id)) return "#d1ddef";
-            return "rgba(150,150,170,0.3)";
-        })
-        .attr("font-family","Outfit,sans-serif")
-        .attr("font-weight", d => d.id===focusNodeId ? "600" : "400")
-        .attr("pointer-events","none")
-        .text(d => {
-            const mc = maxChars(d);
-            return d.label.length > mc ? d.label.substring(0,mc)+"…" : d.label;
-        });
-
-    // Canvas tıklanınca focus kaldır
-    svg.on("click", () => { if (focusNodeId) { focusNodeId = null; renderGraph(); } });
-
-    simulation.on("tick",()=>{
-        link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y)
-            .attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
-        nodeG.attr("transform",d=>`translate(${d.x},${d.y})`);
+    const degree = new Map();
+    linkList.forEach(l => {
+      const s = l.source, t = l.target;
+      degree.set(s, (degree.get(s) || 0) + 1); degree.set(t, (degree.get(t) || 0) + 1);
     });
 
-    // Graph subtitle güncelle
-    const sub = document.getElementById("graphSubtitle");
-    if (sub) {
-        if (hasFocus) {
-            const focused = allNodes.find(n => n.id===focusNodeId);
-            sub.textContent = `"${focused?.label||""}" · ${focusNeighbors.size-1} bağlantı · boşluğa tıkla serbest bırak`;
-            sub.style.color = getColor(focused?.oda);
-        } else {
-            sub.textContent = `${allNodes.length} anı · ${allLinks.length} bağlantı`;
-            sub.style.color = "";
-        }
+    const cx = W / 2, cy = H / 2;
+    nodeList.forEach(n => {
+      if (n.x == null) {
+        const spread = Math.min(W, H) * 0.42;
+        n.x = cx + (Math.random() - 0.5) * spread;
+        n.y = cy + (Math.random() - 0.5) * spread;
+      }
+    });
+
+    graphSim = d3.forceSimulation(nodeList)
+      .force('link', d3.forceLink(linkList).id(d => d.id)
+        .distance(d => d.type === 'entity' ? 92 : 150)
+        .strength(d => d.type === 'entity' ? 0.5 : 0.22))
+      .force('charge', d3.forceManyBody().strength(d => d.type === 'entity' ? -120 : -200).distanceMax(560))
+      .force('center', d3.forceCenter(cx, cy))
+      .force('x', d3.forceX(cx).strength(0.05))
+      .force('y', d3.forceY(cy).strength(0.05))
+      .force('collision', d3.forceCollide(d => d.r + 16));
+
+    const link = g.append('g').selectAll('line').data(linkList).join('line')
+      .attr('stroke', d => d.type === 'entity' ? ENTITY_COLOR : roomMeta(byId.get(d.source.id || d.source)?.oda || 'genel').color)
+      .attr('stroke-opacity', d => { if (!hasFocus) return d.type === 'entity' ? 0.35 : 0.4; return (nb.has(d.source.id || d.source) && nb.has(d.target.id || d.target)) ? 0.8 : 0.06; })
+      .attr('stroke-width', d => d.type === 'entity' ? 1 : Math.max(1, (d.value || 0.4) * 3))
+      .attr('stroke-dasharray', d => d.type === 'entity' ? '4 3' : null);
+
+    const nodeG = g.append('g').selectAll('g').data(nodeList).join('g')
+      .style('cursor', 'pointer')
+      .on('mouseover', (e, d) => showTip(e, d))
+      .on('mousemove', moveTip)
+      .on('mouseout', hideTip)
+      .on('click', (e, d) => {
+        e.stopPropagation();
+        if (d.type === 'entity') { toast('Varlık: ' + d.label, ''); return; }
+        state.graph.focus = state.graph.focus === d.id ? null : d.id;
+        renderGraph();
+        openMemoryById(d.id);
+      })
+      .call(d3.drag()
+        .on('start', (e, d) => { if (!e.active) graphSim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+        .on('end', (e, d) => { if (!e.active) graphSim.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+    const dim = d => (hasFocus && !nb.has(d.id)) ? 0.15 : 1;
+
+    nodeG.each(function (d) {
+      const g2 = d3.select(this);
+      const labelIt = d.type === 'entity' || (degree.get(d.id) || 0) > 0 || nb.has(d.id);
+      if (d.type === 'entity') {
+        const s = d.r;
+        g2.append('rect').attr('x', -s).attr('y', -s).attr('width', s * 2).attr('height', s * 2).attr('rx', 3)
+          .attr('transform', 'rotate(45)').attr('fill', ENTITY_COLOR).attr('opacity', () => dim(d) * 0.85)
+          .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
+        if (labelIt) g2.append('text').attr('text-anchor', 'middle').attr('y', s + 13).attr('font-size', 9.5)
+          .attr('fill', 'var(--text-dim)').attr('opacity', () => dim(d)).attr('stroke', 'var(--bg)').attr('stroke-width', 2.5)
+          .attr('paint-order', 'stroke').text(d.label.length > 18 ? d.label.slice(0, 18) + '…' : d.label);
+      } else {
+        const col = roomMeta(d.oda).color;
+        g2.append('circle').attr('r', d.r + 6).attr('fill', col).attr('opacity', () => dim(d) * 0.12);
+        g2.append('circle').attr('r', d.r).attr('fill', col).attr('opacity', () => dim(d) * 0.92)
+          .attr('stroke', d.id === focus ? '#fff' : 'var(--bg)').attr('stroke-width', d.id === focus ? 2.4 : 1.5);
+        if (labelIt) g2.append('text').attr('text-anchor', 'middle').attr('y', d.r + 12).attr('font-size', 9.5)
+          .attr('fill', 'var(--text)').attr('opacity', () => dim(d) * 0.9).attr('stroke', 'var(--bg)').attr('stroke-width', 2.5)
+          .attr('paint-order', 'stroke').text(d.label.length > 20 ? d.label.slice(0, 20) + '…' : d.label);
+      }
+    });
+
+    graphSim.on('tick', () => {
+      link.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      nodeG.attr('transform', d => `translate(${clamp(d.x, 20, W - 20)},${clamp(d.y, 20, H - 20)})`);
+    });
+    if (reheat) graphSim.alpha(1).restart();
+  }
+
+  function showTip(e, d) {
+    const tip = $('#tooltip');
+    if (d.type === 'entity') tip.innerHTML = `<b>🏷️ ${esc(d.label)}</b><div class="tt-dim">Knowledge Graph varlığı</div>`;
+    else tip.innerHTML = `<b>${esc(d.label)}</b><div class="tt-dim">${esc(roomMeta(d.oda).label)} · önem ${d.importance}/10</div><div class="tt-dim">${esc(ago(d.created_at))}</div>`;
+    tip.classList.remove('hidden'); moveTip(e);
+  }
+  function moveTip(e) { const t = $('#tooltip'); t.style.left = (e.clientX + 14) + 'px'; t.style.top = (e.clientY + 14) + 'px'; }
+  function hideTip() { $('#tooltip').classList.add('hidden'); }
+
+  /* ─────────────────────────── VIEW: ROOMS ─────────────────────────── */
+  async function viewRooms(c) {
+    if (state.graphError) { c.innerHTML = errorHTML(); return; }
+    renderRoomNav();
+    if (!state.rooms.length) { c.innerHTML = viewShell('Odalar', 'Otomatik sınıflandırılmış hafıza odaları', '', emptyHTML('Henüz oda yok.', '🗂️')); return; }
+    c.innerHTML = viewShell('Odalar', 'Anıların otomatik yerleştirildiği odalar', '') + `
+      <div class="grid cols-3">
+        ${state.rooms.map(r => `
+          <div class="card" style="cursor:pointer;border-left:3px solid ${r.color}" onclick="navigate('room','${esc(r.key)}')">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <span style="font-size:1.5rem">${r.icon}</span>
+              <div><div style="font-weight:700">${esc(r.label)}</div><div class="muted small">${r.count} anı · ort. önem ${r.avgImp.toFixed(1)}</div></div>
+            </div>
+            <div class="bar-track" style="margin-bottom:8px"><div class="bar-fill" style="width:${clamp(r.count / state.rooms[0].count * 100, 4, 100)}%;background:${r.color}"></div></div>
+            <div class="muted small">son güncelleme: ${r.last ? esc(ago(r.last)) : '—'}</div>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  /* ─────────────────────────── VIEW: ROOM DETAIL ─────────────────────────── */
+  async function viewRoomDetail(c, oda) {
+    if (!oda) { navigate('rooms'); return; }
+    const all = state.memories.filter(m => (m.oda || 'genel') === oda);
+    const meta = roomMeta(oda);
+    renderRoomNav();
+    if (!all.length) { c.innerHTML = viewShell(meta.label, 'Bu odada anı yok', '') + emptyHTML('Bu odada henüz anı yok.', meta.icon); return; }
+
+    c.innerHTML = viewShell(`${meta.icon} ${meta.label}`,
+      `${all.length} anı · ortalama önem ${(all.reduce((a, m) => a + m.importance, 0) / all.length).toFixed(1)}`,
+      `<button class="btn small ghost" onclick="navigate('rooms')">← Tüm odalar</button>`) + `
+      <div class="controls">
+        <input class="field" id="roomSearch" type="text" placeholder="Bu odada semantik ara…" style="min-width:280px" />
+        <div class="seg" id="roomSort">
+          <button data-sort="importance" class="active">Önem</button>
+          <button data-sort="date">Tarih</button>
+          <button data-sort="liveness">Canlılık</button>
+        </div>
+      </div>
+      <div id="roomList"></div>`;
+
+    let sort = 'importance';
+    const render = (list) => {
+      const arr = [...list];
+      if (sort === 'importance') arr.sort((a, b) => b.importance - a.importance);
+      else if (sort === 'date') arr.sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
+      else arr.sort((a, b) => liveness(b) - liveness(a));
+      const box = $('#roomList');
+      box.innerHTML = `<div class="mem-list">${arr.map(m => memItem(m)).join('')}</div>`;
+      bindMemItems(box);
+    };
+    render(all);
+
+    $$('#roomSort button').forEach(b => b.onclick = () => {
+      sort = b.dataset.sort;
+      $$('#roomSort button').forEach(x => x.classList.toggle('active', x === b));
+      render(all);
+    });
+    const rs = $('#roomSearch');
+    rs.addEventListener('keydown', debounce(async (e) => {
+      const q = rs.value.trim();
+      if (!q) { render(all); return; }
+      const res = await api(`/api/search?q=${encodeURIComponent(q)}&oda=${encodeURIComponent(oda)}&n=20`);
+      if (!res) { render(all); return; }
+      const list = res.map(r => ({ id: r.id, konu: r.konu, bilgi: r.content, oda: r.oda, importance: r.importance, tags: r.tags || [], created_at: r.created_at, _score: r.score }));
+      const box = $('#roomList');
+      box.innerHTML = `<div class="muted small" style="margin-bottom:10px">${list.length} sonuç · semantik arama</div>` +
+        (list.length ? `<div class="mem-list">${list.map(m => memItem(m)).join('')}</div>` : emptyHTML('Sonuç yok.', '🔍'));
+      bindMemItems(box);
+    }, 350));
+  }
+
+  /* ─────────────────────────── VIEW: TIMELINE ─────────────────────────── */
+  function viewTimeline(c) {
+    if (state.graphError) { c.innerHTML = errorHTML(); return; }
+    renderRoomNav();
+    const days = state.timelineDays;
+    const mem = state.memories.filter(m => daysOld(m.created_at) <= days);
+    const controls = `<div class="seg" id="tlRange">
+      ${[7, 30, 90, 3650].map(d => `<button data-d="${d}" class="${d === days ? 'active' : ''}">${d === 3650 ? 'Tümü' : 'Son ' + d + ' gün'}</button>`).join('')}
+    </div>`;
+    if (!mem.length) { c.innerHTML = viewShell('Zaman Çizelgesi', 'Zamana yayılmış anılar', controls) + emptyHTML('Bu aralıkta anı yok.', '🕰️'); bindRange(c); return; }
+
+    const sorted = [...mem].sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
+    const groups = new Map();
+    for (const m of sorted) {
+      const key = (m.created_at || '').slice(0, 10) || 'bilinmiyor';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
     }
+    const activity = dailyCounts(mem, Math.min(days, 90));
 
-}
+    c.innerHTML = viewShell('Zaman Çizelgesi', `${mem.length} anı · son ${days === 3650 ? 'tüm zamanlar' : days + ' gün'}`, controls) + `
+      <div class="card" style="margin-bottom:16px">
+        <h3>📈 Günlük Kayıt Aktivitesi <span class="sub">son ${activity.length} gün</span></h3>
+        ${areaSVG(activity)}
+      </div>
+      <div>${Array.from(groups.entries()).map(([day, items]) => `
+        <div class="tl-day">
+          <div class="tl-day-label"><b>${esc(fmtDate(day))}</b><span>${items.length} anı</span></div>
+          <div class="tl-rail"></div>
+          <div class="tl-items">${items.map(m => memItem(m)).join('')}</div>
+        </div>`).join('')}</div>`;
+    bindRange(c);
+    bindMemItems(c);
+  }
+  function bindRange(c) {
+    const seg = $('#tlRange', c); if (!seg) return;
+    $$('#tlRange button', c).forEach(b => b.onclick = () => { state.timelineDays = Number(b.dataset.d); viewTimeline(c); });
+  }
 
+  /* ─────────────────────────── VIEW: ANALYTICS ─────────────────────────── */
+  async function viewAnalytics(c) {
+    if (state.graphError) { c.innerHTML = errorHTML(); return; }
+    renderRoomNav();
+    const mem = state.memories;
+    if (!mem.length) { c.innerHTML = viewShell('Analitik', 'Hafızanın sayısal görünümü', '') + emptyHTML('Analiz için henüz veri yok.', '📊'); return; }
+    await loadReminders();
 
-function openMemory(data) {
-    let panel = document.getElementById("detailPanel");
-    if (!panel) {
-        document.body.insertAdjacentHTML("beforeend", `<div id="detailPanel" class="detail-panel">
-            <div class="detail-header"><span id="detailBadge" class="detail-badge">ODA</span><button class="close-btn" onclick="closeDetail()">×</button></div>
-            <h2 id="detailTitle"></h2>
-            <div id="detailMeta" class="detail-meta"></div>
-            <div id="detailContent" class="detail-body"></div>
-            <div id="detailTags" class="detail-tags"></div>
-        </div>`);
-        panel = document.getElementById("detailPanel");
+    const donut = donutSVG(state.rooms.map(r => ({ label: r.label, value: r.count, color: r.color })));
+    const tags = tagsFrom(mem).slice(0, 12);
+    const hist = importanceHistogram(mem);
+    const scatter = decayScatter(mem);
+    const weekly = dailyCounts(mem, 90);
+    const avgImp = (mem.reduce((a, m) => a + m.importance, 0) / mem.length);
+    const avgLive = (mem.reduce((a, m) => a + liveness(m), 0) / mem.length);
+    const oldest = mem.reduce((a, m) => (Date.parse(m.created_at) < Date.parse(a.created_at) ? m : a), mem[0]);
+
+    c.innerHTML = viewShell('Analitik', 'Oda, etiket, önem ve unutma eğrisi analizleri', '') + `
+      <div class="grid cols-kpi" style="margin-bottom:16px">
+        ${kpi('Anı', mem.length, 'aktif kayıt', 'var(--violet)')}
+        ${kpi('Ort. Önem', avgImp.toFixed(2), '10 üzerinden', 'var(--amber)')}
+        ${kpi('Ort. Canlılık', avgLive.toFixed(2), 'unutma sonrası', 'var(--cyan)')}
+        ${kpi('En Eski Anı', ago(oldest.created_at), fmtDate(oldest.created_at), 'var(--blue)')}
+      </div>
+
+      <div class="grid cols-2" style="margin-bottom:16px">
+        <div class="card"><h3>🗂️ Oda Dağılımı</h3>${donut.html}</div>
+        <div class="card"><h3>🏷️ En Çok Kullanılan Etiketler <span class="sub">ilk 12</span></h3>
+          ${tags.length ? tags.map(t => barRow(t.tag, t.count, tags[0].count, 'var(--cyan)')).join('') : '<div class="muted small">etiket yok</div>'}
+        </div>
+      </div>
+
+      <div class="grid cols-2" style="margin-bottom:16px">
+        <div class="card"><h3>📊 Önem Skoru Dağılımı <span class="sub">1–10</span></h3>${hist}</div>
+        <div class="card"><h3>🌡️ Unutma Eğrisi <span class="sub">yaş × canlılık</span></h3>${scatter}
+          <div class="muted small" style="margin-top:6px">Kesikli çizgi: önem=10 için teorik Ebbinghaus eğrisi (0.99<sup>gün</sup>).</div>
+        </div>
+      </div>
+
+      <div class="card"><h3>📈 Kayıt Hızı <span class="sub">son 90 gün, günlük</span></h3>${areaSVG(weekly)}
+        <div class="grid cols-4" style="margin-top:14px">
+          ${kpiStat('Son 7 gün', mem.filter(m => daysOld(m.created_at) <= 7).length)}
+          ${kpiStat('Son 30 gün', mem.filter(m => daysOld(m.created_at) <= 30).length)}
+          ${kpiStat('Ort. etiket/anı', (mem.reduce((a, m) => a + (m.tags || []).length, 0) / mem.length).toFixed(2))}
+          ${kpiStat('Yüksek önem (≥8)', mem.filter(m => m.importance >= 8).length)}
+        </div>
+      </div>`;
+  }
+  function kpiStat(label, value) {
+    return `<div class="mg" style="padding:10px 12px;border-radius:10px;background:var(--card);border:1px solid var(--border-soft)">
+      <div class="muted small">${esc(label)}</div><div style="font-size:1.2rem;font-weight:700;font-family:var(--mono);margin-top:3px">${esc(value)}</div></div>`;
+  }
+
+  /* ─────────────────────────── VIEW: REMINDERS ─────────────────────────── */
+  async function viewReminders(c) {
+    if (state.graphError) { c.innerHTML = errorHTML(); return; }
+    renderRoomNav();
+    await loadReminders();
+    const rem = state.reminders || deriveReminders();
+    const h = state.health || {};
+
+    const health = `
+      <div class="grid cols-4" style="margin-bottom:16px">
+        ${kpi('Ollama', h.ollama === true ? 'Hazır' : (h.ollama === false ? 'Kapalı' : '?'), h.ollama === true ? 'embeddings çalışıyor' : 'model yanıtı yok', h.ollama === true ? 'var(--green)' : 'var(--red)')}
+        ${kpi('Toplam Anı', h.memories ?? state.memories.length, 'ChromaDB koleksiyonu', 'var(--violet)')}
+        ${kpi('Sürüm', h.version || '2.0.0', 'Localmind', 'var(--blue)')}
+        ${kpi('SSE', $('#pulseText')?.textContent || '–', 'canlı nabız', 'var(--cyan)')}
+      </div>`;
+
+    c.innerHTML = viewShell('Hatırlatmalar & Sağlık', 'Önemli ama unutulmaya yüz tutmuş anılar ve sistem durumu', '') + health + `
+      <div class="card">
+        <h3>🔔 Hatırlatılması Gerekenler <span class="sub">önem × unutulma skoruna göre</span></h3>
+        ${rem.length ? `<div class="mem-list">${rem.map(r => reminderCard(r)).join('')}</div>`
+          : emptyHTML('Harika — bekleyen hatırlatma yok.', '✅')}
+        <div class="muted small" style="margin-top:14px;line-height:1.6">
+          Skor = önem − (önem × 0.99<sup>gün</sup>). Uzun süre erişilmeyen yüksek önemli anılar öne çıkar (Ebbinghaus unutma eğrisi).
+          ${state.reminders ? '' : 'Kesin erişim sayaçları için opsiyonel /api/reminders uç noktasını etkinleştirebilirsin.'}
+        </div>
+      </div>`;
+    bindReminderItems(c);
+    bindMemItems(c);
+  }
+  function reminderCard(r) {
+    const meta = roomMeta(r.oda);
+    const fs = r.forgotten_score != null ? r.forgotten_score : r.forgotten;
+    return `<div class="mem-item" style="border-left-color:${meta.color}" data-mem-id="${esc(r.id)}">
+      <div class="mi-top">
+        <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+        <span class="mi-title">${esc(r.konu)}</span>
+        <span class="imp" style="margin-left:auto">🔔 ${Number(fs).toFixed(1)}</span>
+      </div>
+      <div class="mi-body">${esc((r.bilgi || r.content || '').slice(0, 200))}</div>
+      <div class="mi-foot"><span>önem ${Number(r.importance).toFixed(0)}/10</span><span>·</span><span>${r.days_ago != null ? r.days_ago + ' gün önce' : esc(ago(r.created_at))}</span></div>
+    </div>`;
+  }
+  function miniReminder(r) {
+    const meta = roomMeta(r.oda);
+    return `<div class="mem-item" style="margin-bottom:8px;border-left-color:${meta.color}" onclick="navigate('reminders')">
+      <div class="mi-top"><span class="mi-title" style="font-size:.84rem">${esc(r.konu)}</span>
+      <span class="imp" style="margin-left:auto;font-size:.72rem">🔔 ${Number(r.forgotten_score ?? r.forgotten ?? 0).toFixed(1)}</span></div>
+      <div class="mi-foot">${esc(meta.label)} · ${r.days_ago != null ? r.days_ago + ' gün' : esc(ago(r.created_at))}</div>
+    </div>`;
+  }
+
+  /* ─────────────────────────── MEMORY ITEMS / MODAL ─────────────────────────── */
+  function memItem(m) {
+    const meta = roomMeta(m.oda);
+    const score = m._score != null ? `<span class="sr-score">%${(m._score * 100).toFixed(0)}</span>` : '';
+    return `<div class="mem-item" style="border-left-color:${meta.color}" data-mem-id="${esc(m.id)}">
+      <div class="mi-top">
+        <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+        <span class="mi-title">${esc(m.konu)}</span>
+        <span class="imp" style="margin-left:auto">★ ${Number(m.importance).toFixed(0)}</span>${score}
+      </div>
+      <div class="mi-body">${esc((m.bilgi || '').slice(0, 220))}</div>
+      <div class="mi-foot">
+        <span>${esc(ago(m.created_at))}</span>
+        ${(m.tags || []).slice(0, 4).map(t => `<span class="tag">${esc(t)}</span>`).join('')}
+      </div>
+    </div>`;
+  }
+  function bindMemItems(root) {
+    $$('.mem-item[data-mem-id]', root).forEach(el => {
+      el.onclick = (e) => { if (e.target.closest('.mini')) return; openMemoryById(el.dataset.memId); };
+    });
+  }
+  function bindReminderItems(root) {
+    $$('.mem-item[data-mem-id]', root).forEach(el => {
+      if (el._bound) return; el._bound = true;
+    });
+  }
+
+  function openMemoryById(id) {
+    const m = state.memories.find(x => x.id === id);
+    if (!m) return;
+    const links = (state.links || []).filter(l => (typeof l.source === 'object' ? l.source.id : l.source) === id || (typeof l.target === 'object' ? l.target.id : l.target) === id);
+    const related = [];
+    for (const l of links) {
+      const other = (typeof l.source === 'object' ? l.source.id : l.source) === id
+        ? (typeof l.target === 'object' ? l.target.id : l.target)
+        : (typeof l.source === 'object' ? l.source.id : l.source);
+      const mm = state.memories.find(x => x.id === other);
+      if (mm && !related.find(r => r.id === mm.id)) related.push(mm);
     }
-    document.getElementById("detailTitle").innerText = data.label || data.konu || "";
-    document.getElementById("detailBadge").innerText = (data.oda || "genel").toUpperCase();
-    document.getElementById("detailContent").innerText = data.content || "";
+    const meta = roomMeta(m.oda);
+    $('#modal').innerHTML = `
+      <div class="modal-head">
+        <div><h2>${esc(m.konu)}</h2>
+          <div class="muted small" style="margin-top:4px">${meta.icon} ${esc(meta.label)} · ${esc(fmtDateTime(m.created_at))}</div></div>
+        <span class="modal-close" onclick="closeModal()">✕</span>
+      </div>
+      <div class="meta-grid">
+        <div class="mg"><label>Önem</label><b style="color:var(--amber)">★ ${Number(m.importance).toFixed(1)}</b></div>
+        <div class="mg"><label>Canlılık</label><b style="color:var(--cyan)">${liveness(m).toFixed(2)}</b></div>
+        <div class="mg"><label>Yaş</label><b>${esc(ago(m.created_at))}</b></div>
+        <div class="mg"><label>Bağlantı</label><b>${related.length}</b></div>
+      </div>
+      <div style="margin-bottom:8px">${(m.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+      <div class="detail-body">${esc(m.bilgi)}</div>
+      ${related.length ? `<h3 style="margin:20px 0 10px">🔗 İlişkili Anılar</h3>
+        <div class="mem-list">${related.slice(0, 6).map(r => memItem(r)).join('')}</div>` : ''}
+      <div style="display:flex;gap:10px;margin-top:22px">
+        <button class="btn" onclick="navigate('graph')">🕸️ Grafikte gör</button>
+        <button class="btn" style="border-color:var(--red);color:var(--red)" onclick="archiveMemory('${esc(m.id)}')">🗄️ Arşivle</button>
+      </div>`;
+    $('#overlay').classList.remove('hidden');
+    bindMemItems($('#modal'));
+  }
 
-    const metaEl = document.getElementById("detailMeta");
-    const parts = [];
-    if (data.importance) parts.push(`Önem: ${Number(data.importance).toFixed(0)}/10`);
-    if (data.created_at) parts.push(new Date(data.created_at).toLocaleDateString("tr-TR", {day:"numeric",month:"long",year:"numeric"}));
-    metaEl.innerText = parts.join("  ·  ");
+  function closeModal() { $('#overlay').classList.add('hidden'); }
+  window.closeModal = closeModal;
 
-    const tagsEl = document.getElementById("detailTags");
-    const tags = data.tags || [];
-    tagsEl.innerHTML = tags.map(t => `<span class="memory-tag">${t}</span>`).join("");
+  async function archiveMemory(id) {
+    if (!confirm('Bu anıyı arşivlemek istediğine emin misin? (silinmez, aktif görünümden kaldırılır)')) return;
+    const r = await api('/api/memory/archive', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memory_id: id }),
+    });
+    if (r && (r.status === 'archived' || r.ok !== false)) {
+      toast('Anı arşivlendi.', 'ok'); closeModal();
+      state.loadedAt = 0; await loadCore(true); await loadHeader(); await router();
+    } else toast('Arşivleme başarısız.', 'err');
+  }
+  window.archiveMemory = archiveMemory;
 
-    panel.classList.add("active");
-}
-window.closeDetail = () => document.getElementById("detailPanel")?.classList.remove("active");
-document.addEventListener("keydown", e => { if (e.key === "Escape") window.closeDetail(); });
+  /* ─────────────────────────── ADD MEMORY ─────────────────────────── */
+  function openAddForm() {
+    const roomOpts = ['otomatik', ...Object.keys(ROOM_META)].map(k =>
+      `<option value="${k === 'otomatik' ? '' : k}">${k === 'otomatik' ? 'Otomatik belirle' : ROOM_META[k].label}</option>`).join('');
+    $('#modal').innerHTML = `
+      <div class="modal-head"><div><h2>+ Yeni Anı Ekle</h2><div class="muted small" style="margin-top:4px">Ollama otomatik sınıflandırma ve varlık çıkarımı yapar</div></div>
+        <span class="modal-close" onclick="closeModal()">✕</span></div>
+      <div class="form-row"><label>Konu (başlık)</label><input class="field" id="fKonu" placeholder="Örn: NixOS flake yapılandırması" /></div>
+      <div class="form-row"><label>Bilgi (içerik)</label><textarea class="field" id="fBilgi" placeholder="Kaydedilecek bilginin tamamı…"></textarea></div>
+      <div class="grid cols-2">
+        <div class="form-row"><label>Oda</label><select class="field" id="fOda">${roomOpts}</select></div>
+        <div class="form-row"><label>Önem: <b id="fImpVal">7</b>/10</label>
+          <input type="range" id="fImp" min="1" max="10" value="7" style="width:100%" /></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="btn primary" id="fSave">💾 Kaydet</button>
+        <button class="btn ghost" onclick="closeModal()">İptal</button>
+      </div>`;
+    $('#overlay').classList.remove('hidden');
+    $('#fImp').oninput = e => $('#fImpVal').textContent = e.target.value;
+    $('#fSave').onclick = async () => {
+      const konu = $('#fKonu').value.trim(), bilgi = $('#fBilgi').value.trim();
+      if (!konu || !bilgi) { toast('Konu ve bilgi zorunlu.', 'err'); return; }
+      const body = { konu, bilgi, oda: $('#fOda').value || null, importance: Number($('#fImp').value), agent_id: 'user' };
+      $('#fSave').textContent = 'Kaydediliyor…'; $('#fSave').disabled = true;
+      const r = await api('/api/memory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (r) { toast(r.message || 'Anı kaydedildi.', 'ok'); closeModal(); state.loadedAt = 0; await loadCore(true); await loadHeader(); await router(); }
+      else { toast('Kaydetme başarısız — sunucu/Ollama kontrol et.', 'err'); $('#fSave').textContent = '💾 Kaydet'; $('#fSave').disabled = false; }
+    };
+  }
 
-
-let _lastTotal = -1;
-const sse = new EventSource("/api/events");
-sse.onmessage = async e => {
-    try {
-        const data = JSON.parse(e.data);
-        sseStatus = "CONNECTED";
-        const total = data.total ?? 0;
-        document.getElementById("headerTotal").innerText = total;
-        if (_lastTotal !== -1 && total !== _lastTotal) {
-            await loadGraphData();
-            await loadSidebar();
-            const { view } = getRoute();
-            if (view === "home") renderGraph();
+  /* ─────────────────────────── SEARCH ─────────────────────────── */
+  function initSearch() {
+    const input = $('#globalSearch'), box = $('#searchResults');
+    const run = debounce(async () => {
+      const q = input.value.trim();
+      if (!q) { box.classList.add('hidden'); return; }
+      const res = await api(`/api/search?q=${encodeURIComponent(q)}&n=8`);
+      if (!res || !res.length) { box.innerHTML = '<div class="sr-item muted">sonuç yok</div>'; box.classList.remove('hidden'); return; }
+      box.innerHTML = res.map(r => `
+        <div class="sr-item" data-mem-id="${esc(r.id)}">
+          <div class="sr-top"><span class="badge room" style="border-color:${roomMeta(r.oda).color}">${roomMeta(r.oda).icon} ${esc(roomMeta(r.oda).label)}</span>
+            <span>${esc(r.konu)}</span><span class="sr-score">%${((r.score || 0) * 100).toFixed(0)}</span></div>
+          <div class="sr-body">${esc((r.content || '').slice(0, 160))}</div>
+        </div>`).join('');
+      box.classList.remove('hidden');
+      $$('.sr-item[data-mem-id]', box).forEach(el => el.onclick = () => {
+        box.classList.add('hidden'); input.value = '';
+        const id = el.dataset.memId;
+        if (!state.memories.find(m => m.id === id)) {
+          toast('Kayıt görüntüleniyor…');
         }
-        _lastTotal = total;
-    } catch { sseStatus = e.data; }
-};
-sse.onopen = () => { sseStatus = "CONNECTED"; document.getElementById("pulseStatus").innerText = "Aktif (SSE)"; };
-sse.onerror = () => { sseStatus = "DISCONNECTED"; document.getElementById("pulseStatus").innerText = "Bağlantı kesildi"; };
+        openMemoryById(id) || openTransientMemory(id, res);
+      });
+    }, 300);
+    input.addEventListener('input', run);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { run(); } });
+    document.addEventListener('click', (e) => { if (!e.target.closest('.global-search')) box.classList.add('hidden'); });
+  }
+  function openTransientMemory(id, res) {
+    const s = res.find(r => r.id === id); if (!s) return;
+    const m = { id, konu: s.konu, bilgi: s.content, oda: s.oda, importance: s.importance, tags: s.tags || [], created_at: s.created_at };
+    state.memories.push(m); openMemoryById(id);
+  }
 
-(async () => { await loadSidebar(); await router(); })();
+  /* ─────────────────────────── CHARTS (SVG) ─────────────────────────── */
+  function donutSVG(segments) {
+    const total = segments.reduce((a, s) => a + s.value, 0) || 1;
+    const r = 54, C = 2 * Math.PI * r, cx = 74, cy = 74;
+    let off = 0;
+    const arcs = segments.map(s => {
+      const len = (s.value / total) * C;
+      const el = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="18" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"/>`;
+      off += len; return el;
+    }).join('');
+    const svg = `<svg width="148" height="148" viewBox="0 0 148 148"><g transform="rotate(-90 ${cx} ${cy})">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="18"/>${arcs}</g>
+      <text x="${cx}" y="${cy - 3}" text-anchor="middle" font-size="22" font-weight="700" fill="var(--text)" font-family="var(--mono)">${total}</text>
+      <text x="${cx}" y="${cy + 15}" text-anchor="middle" font-size="9" fill="var(--text-dim)">anı</text></svg>`;
+    const legend = segments.map(s => `<div class="dl"><i style="background:${s.color}"></i>${esc(s.label)}<b>${s.value}</b></div>`).join('');
+    return { html: `<div class="donut-wrap"><div>${svg}</div><div class="donut-legend">${legend || '<span class="muted">–</span>'}</div></div>` };
+  }
+
+  function importanceHistogram(mem) {
+    const bins = Array.from({ length: 10 }, (_, i) => ({ label: String(i + 1), v: 0 }));
+    for (const m of mem) { const i = clamp(Math.round(m.importance), 1, 10) - 1; bins[i].v++; }
+    const max = Math.max(1, ...bins.map(b => b.v));
+    const W = 560, H = 190, pad = 26, bw = (W - pad * 2) / 10;
+    const bars = bins.map((b, i) => {
+      const h = (b.v / max) * (H - pad * 2);
+      const x = pad + i * bw;
+      return `<rect x="${x + 3}" y="${H - pad - h}" width="${bw - 6}" height="${Math.max(h, 1)}" rx="3" fill="var(--violet)" opacity="${0.45 + 0.5 * (b.v / max)}"/>
+        <text x="${x + bw / 2}" y="${H - pad + 12}" text-anchor="middle" font-size="9" fill="var(--text-faint)">${b.label}</text>
+        ${b.v ? `<text x="${x + bw / 2}" y="${H - pad - h - 4}" text-anchor="middle" font-size="9" fill="var(--text-dim)">${b.v}</text>` : ''}`;
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:190px"><line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="var(--border)"/><line x1="${pad}" y1="${pad - 8}" x2="${pad}" y2="${H - pad}" stroke="var(--border)"/>${bars}</svg>`;
+  }
+
+  function decayScatter(mem) {
+    const W = 560, H = 200, pad = 34;
+    const maxDays = Math.max(7, ...mem.map(m => daysOld(m.created_at)));
+    const px = d => pad + (d / maxDays) * (W - pad * 2);
+    const py = v => H - pad - (clamp(v, 0, 10) / 10) * (H - pad * 2);
+    let path = '';
+    for (let d = 0; d <= maxDays; d += Math.max(1, maxDays / 60)) path += `${path ? 'L' : 'M'}${px(d).toFixed(1)},${py(10 * Math.pow(DECAY, d)).toFixed(1)} `;
+    const pts = mem.slice(0, 400).map(m => {
+      const c = roomMeta(m.oda).color;
+      return `<circle cx="${px(daysOld(m.created_at)).toFixed(1)}" cy="${py(liveness(m)).toFixed(1)}" r="3.4" fill="${c}" opacity="0.72"><title>${esc(m.konu)}</title></circle>`;
+    }).join('');
+    const yTicks = [0, 2.5, 5, 7.5, 10].map(v => `<text x="${pad - 6}" y="${py(v) + 3}" text-anchor="end" font-size="9" fill="var(--text-faint)">${v}</text><line x1="${pad}" y1="${py(v)}" x2="${W - pad}" y2="${py(v)}" stroke="var(--border-soft)"/>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:200px">${yTicks}
+      <path d="${path}" fill="none" stroke="var(--text-faint)" stroke-width="1.4" stroke-dasharray="4 4"/>
+      ${pts}
+      <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="var(--border)"/>
+      <text x="${W - pad}" y="${H - pad + 14}" text-anchor="end" font-size="9" fill="var(--text-faint)">gün →</text>
+      <text x="${pad}" y="14" font-size="9" fill="var(--text-faint)">canlılık ↑</text></svg>`;
+  }
+
+  function areaSVG(points) {
+    const W = 700, H = 150, pad = 24;
+    if (!points.length) return '<div class="muted small">veri yok</div>';
+    const max = Math.max(1, ...points.map(p => p.v));
+    const px = i => pad + (i / Math.max(1, points.length - 1)) * (W - pad * 2);
+    const py = v => H - pad - (v / max) * (H - pad * 2);
+    let line = '';
+    points.forEach((p, i) => { line += `${i ? 'L' : 'M'}${px(i).toFixed(1)},${py(p.v).toFixed(1)} `; });
+    const area = line + `L${px(points.length - 1).toFixed(1)},${H - pad} L${px(0).toFixed(1)},${H - pad} Z`;
+    const labels = points.map((p, i) => (i % Math.ceil(points.length / 7) === 0 || i === points.length - 1)
+      ? `<text x="${px(i)}" y="${H - 6}" text-anchor="middle" font-size="9" fill="var(--text-faint)">${esc(p.label)}</text>` : '').join('');
+    const dots = points.map((p, i) => p.v ? `<circle cx="${px(i)}" cy="${py(p.v)}" r="2.2" fill="var(--cyan)"><title>${esc(p.label)}: ${p.v}</title></circle>` : '').join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:150px">
+      <defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="var(--cyan)" stop-opacity="0.35"/><stop offset="100%" stop-color="var(--cyan)" stop-opacity="0"/></linearGradient></defs>
+      <path d="${area}" fill="url(#ag)"/><path d="${line}" fill="none" stroke="var(--cyan)" stroke-width="2"/>
+      ${dots}<line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="var(--border)"/>${labels}</svg>`;
+  }
+
+  function dailyCounts(mem, days) {
+    const out = [];
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now); d.setDate(now.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const next = new Date(d); next.setDate(d.getDate() + 1);
+      const v = mem.filter(m => { const t = Date.parse(m.created_at); return t >= d.getTime() && t < next.getTime(); }).length;
+      out.push({ label: `${d.getDate()}.${d.getMonth() + 1}`, v });
+    }
+    return out;
+  }
+
+  function tagsFrom(mem) {
+    const c = new Map();
+    for (const m of mem) for (const t of (m.tags || [])) if (t) c.set(t, (c.get(t) || 0) + 1);
+    return Array.from(c.entries()).map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count);
+  }
+  function topConnected() {
+    const deg = new Map();
+    for (const l of (state.links || [])) {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      deg.set(s, (deg.get(s) || 0) + 1); deg.set(t, (deg.get(t) || 0) + 1);
+    }
+    return Array.from(deg.entries()).map(([id, d]) => ({ m: state.memories.find(x => x.id === id), d }))
+      .filter(x => x.m).sort((a, b) => b.d - a.d).slice(0, 6);
+  }
+  function deriveReminders() {
+    return state.memories.map(m => ({
+      id: m.id, konu: m.konu, bilgi: m.bilgi, oda: m.oda, importance: m.importance,
+      created_at: m.created_at, days_ago: Math.floor(daysOld(m.created_at)), forgotten: forgotten(m), tags: m.tags,
+    })).sort((a, b) => b.forgotten - a.forgotten).slice(0, 12);
+  }
+
+  /* ─────────────────────────── PARTICLES ─────────────────────────── */
+  function initParticles() {
+    const cv = $('#particles'); if (!cv) return;
+    const ctx = cv.getContext('2d');
+    let ps = [];
+    function resize() {
+      cv.width = innerWidth; cv.height = innerHeight;
+      ps = Array.from({ length: Math.min(60, Math.floor(innerWidth / 26)) }, () => ({
+        x: Math.random() * cv.width, y: Math.random() * cv.height,
+        vx: (Math.random() - .5) * .25, vy: (Math.random() - .5) * .25, r: Math.random() * 1.6 + .4,
+      }));
+    }
+    resize(); addEventListener('resize', resize);
+    (function loop() {
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      const light = document.documentElement.dataset.theme === 'light';
+      for (const p of ps) {
+        p.x += p.vx; p.y += p.vy;
+        if (p.x < 0 || p.x > cv.width) p.vx *= -1;
+        if (p.y < 0 || p.y > cv.height) p.vy *= -1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7);
+        ctx.fillStyle = light ? 'rgba(120,80,200,.25)' : 'rgba(150,110,240,.35)';
+        ctx.fill();
+      }
+      requestAnimationFrame(loop);
+    })();
+  }
+
+  /* ─────────────────────────── THEME ─────────────────────────── */
+  function initTheme() {
+    const saved = localStorage.getItem('lm-theme');
+    if (saved) document.documentElement.dataset.theme = saved;
+    $('#themeToggle').onclick = () => {
+      const cur = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = cur;
+      localStorage.setItem('lm-theme', cur);
+    };
+  }
+
+  /* ─────────────────────────── INIT ─────────────────────────── */
+  async function init() {
+    initTheme();
+    initParticles();
+    initSearch();
+    initSSE();
+    $('#menuToggle').onclick = () => $('#sidebar').classList.toggle('open');
+    $('#addBtn').onclick = openAddForm;
+    $('#overlay').onclick = (e) => { if (e.target.id === 'overlay') closeModal(); };
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+    $$('.nav-link').forEach(a => {
+      a.onclick = (e) => {
+        e.preventDefault();
+        navigate(a.dataset.view);
+      };
+    });
+
+    await loadHeader();
+    await router();
+    await loadHeader();
+    renderRoomNav();
+    window.addEventListener('hashchange', router);
+    // periyodik sağlık yenileme (~30 sn)
+    setInterval(loadHeader, 30000);
+    window.addEventListener('resize', debounce(() => { if (state.route.view === 'graph') renderGraph(); }, 250));
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();

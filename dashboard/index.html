@@ -1,65 +1,96 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="tr" data-theme="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Localmind | Zihin Sarayı</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
-    <script src="https://d3js.org/d3.v7.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Localmind · Zihin Sarayı Paneli</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="d3.v7.min.js"></script>
 </head>
 <body>
-    <!-- Ambient Particles Canvas -->
-    <canvas id="particles"></canvas>
+  <!-- Ambient arka plan -->
+  <canvas id="particles"></canvas>
 
-    <div class="app-container">
-        <header class="main-header">
-            <div class="logo" onclick="navigate('home')">
-                <span class="brain-icon">🧠</span>
-                <span class="brand-text">Localmind</span>
-            </div>
-            <div class="header-actions">
-                <div class="status-indicator">
-                    Status: <span id="pulseStatus" class="status-active">Connecting...</span>
-                </div>
-                <div class="header-stat">
-                    <span id="headerTotal" class="stat-number">0</span> memories
-                </div>
-                <div class="profile">
-                    <div class="avatar">XM</div>
-                    <span class="username">xmrah</span>
-                </div>
-            </div>
-        </header>
+  <div class="app">
+    <!-- ───────────── HEADER ───────────── -->
+    <header class="topbar">
+      <button class="icon-btn only-mobile" id="menuToggle" title="Menü">☰</button>
 
-        <div class="main-layout">
-            <aside class="sidebar" id="sidebar">
-                <div class="sidebar-section">
-                    <h3>MAIN</h3>
-                    <nav>
-                        <a href="#home" class="nav-link active" data-view="home"><span>🏠</span> Home</a>
-                        <a href="#rooms" class="nav-link" data-view="rooms"><span>📁</span> Memory Rooms</a>
-                        <a href="#timeline" class="nav-link" data-view="timeline"><span>📅</span> Timeline</a>
-                        <a href="#graph" class="nav-link" data-view="graph"><span>🕸️</span> Graph</a>
-                        <a href="#analytics" class="nav-link" data-view="analytics"><span>📊</span> Analytics</a>
-                        <a href="#settings" class="nav-link" data-view="settings"><span>⚙️</span> Settings</a>
-                    </nav>
-                </div>
-                <div class="sidebar-section" id="sidebarRooms">
-                    <h3>ROOMS</h3>
-                    <nav id="roomNav">
-                        <!-- Dinamik olarak doldurulacak -->
-                    </nav>
-                </div>
-            </aside>
-
-            <main class="content" id="mainContent">
-                <!-- Views buraya inject edilecek -->
-            </main>
+      <div class="brand" onclick="navigate('overview')">
+        <span class="brand-icon">🧠</span>
+        <div class="brand-text">
+          <b>Localmind</b>
+          <small>Zihin Sarayı</small>
         </div>
+      </div>
 
+      <div class="global-search">
+        <span class="gs-icon">⌕</span>
+        <input id="globalSearch" type="text" autocomplete="off"
+               placeholder="Hafızada ara… (Enter ile semantik arama)" />
+        <div id="searchResults" class="search-results hidden"></div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="pill" id="pillPulse" title="Canlı nabız (SSE)">
+          <span class="dot" id="pulseDot"></span><span id="pulseText">bağlanıyor…</span>
+        </div>
+        <div class="pill" id="pillOllama" title="Ollama durumu">
+          <span class="dot" id="ollamaDot"></span><span id="ollamaText">Ollama</span>
+        </div>
+        <div class="pill total-pill" title="Toplam anı">
+          <b id="headerTotal">0</b> <span>anı</span>
+        </div>
+        <button class="btn ghost" id="addBtn" title="Yeni anı ekle">+ Yeni Anı</button>
+        <button class="icon-btn" id="themeToggle" title="Tema değiştir">◐</button>
+      </div>
+    </header>
+
+    <div class="body">
+      <!-- ───────────── SIDEBAR ───────────── -->
+      <aside class="sidebar" id="sidebar">
+        <nav class="nav-group">
+          <h4>PANEL</h4>
+          <a class="nav-link" data-view="overview" href="#overview"><span>🏠</span>Genel Bakış</a>
+          <a class="nav-link" data-view="graph" href="#graph"><span>🕸️</span>Bilgi Grafiği</a>
+          <a class="nav-link" data-view="rooms" href="#rooms"><span>🗂️</span>Odalar</a>
+          <a class="nav-link" data-view="timeline" href="#timeline"><span>🕰️</span>Zaman Çizelgesi</a>
+          <a class="nav-link" data-view="analytics" href="#analytics"><span>📊</span>Analitik</a>
+          <a class="nav-link" data-view="reminders" href="#reminders"><span>🔔</span>Hatırlatmalar</a>
+        </nav>
+
+        <nav class="nav-group">
+          <h4>ODALAR</h4>
+          <div id="roomNav" class="room-nav"><div class="muted small">yükleniyor…</div></div>
+        </nav>
+
+        <div class="sidebar-health" id="sidebarHealth">
+          <div class="sh-row"><span>Toplam anı</span><b id="shTotal">–</b></div>
+          <div class="sh-row"><span>Oda</span><b id="shRooms">–</b></div>
+          <div class="sh-row"><span>Ollama</span><b id="shOllama">–</b></div>
+          <div class="sh-row"><span>Sürüm</span><b id="shVersion">–</b></div>
+          <div class="sh-row"><span>Nabız</span><b id="shPulse">–</b></div>
+        </div>
+      </aside>
+
+      <!-- ───────────── MAIN ───────────── -->
+      <main class="content" id="content">
+        <div class="loading-full"><div class="spinner"></div></div>
+      </main>
     </div>
+  </div>
 
-    <script src="main.js"></script>
+  <!-- Detay paneli / modal -->
+  <div class="overlay hidden" id="overlay">
+    <div class="modal" id="modal"></div>
+  </div>
+
+  <!-- Hover tooltip -->
+  <div class="tooltip hidden" id="tooltip"></div>
+
+  <!-- Toast -->
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="main.js"></script>
 </body>
 </html>

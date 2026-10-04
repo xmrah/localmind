@@ -16,7 +16,7 @@ os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 # LD_LIBRARY_PATH ChromaDB için gerekli
 import ctypes
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -147,20 +147,32 @@ async def profile():
         raise HTTPException(503)
     return manager.get_user_profile()
 
+@app.get("/api/reminders")
+async def reminders(n: int = 5):
+    """Hatırlatılması gereken anılar — Ebbinghaus unutma eğrisi."""
+    if not manager:
+        raise HTTPException(503)
+    return manager.get_reminders(n=n)
+
 # ─────────────────────────────────────────────────────────
 # SSE — CANLI NABİZ
 # ─────────────────────────────────────────────────────────
 
 @app.get("/api/events")
-async def events():
+async def events(request: Request):
     async def stream():
         count = 0
-        while True:
-            total = manager.collection.count() if manager else 0
-            data = json.dumps({"type": "pulse", "total": total, "tick": count})
-            yield f"data: {data}\n\n"
-            count += 1
-            await asyncio.sleep(5)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                total = manager.collection.count() if manager else 0
+                data = json.dumps({"type": "pulse", "total": total, "tick": count})
+                yield f"data: {data}\n\n"
+                count += 1
+                await asyncio.sleep(5)
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -173,4 +185,4 @@ app.mount("/", StaticFiles(directory="/home/xmrah/Projects/localmind/dashboard",
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info", timeout_graceful_shutdown=2)
