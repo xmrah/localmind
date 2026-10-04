@@ -427,16 +427,16 @@
     const g = svg.append('g');
 
     let currentScale = 0.85;
+    let nodeG = null;
+    let link = null;
+
     const zoom = d3.zoom().scaleExtent([0.15, 4.5]).on('zoom', e => {
       currentScale = e.transform.k;
       g.attr('transform', e.transform);
-      updateLabelSizes();
+      if (nodeG) updateLabelSizes();
     });
     graphZoom = zoom;
     svg.call(zoom);
-
-    // Initial camera: geniş ve ferah çerçeveleme
-    svg.call(zoom.transform, d3.zoomIdentity.translate(W * 0.08, H * 0.08).scale(0.85));
 
     const nodeList = nodes.map(n => ({ ...n }));
     const byId = new Map(nodeList.map(n => [n.id, n]));
@@ -497,13 +497,13 @@
         .force('y', d3.forceY(cy).strength(0.05));
     }
 
-    const link = g.append('g').selectAll('line').data(linkList).join('line')
+    link = g.append('g').selectAll('line').data(linkList).join('line')
       .attr('stroke', d => d.type === 'entity' ? ENTITY_COLOR : roomMeta(byId.get(d.source.id || d.source)?.oda || 'genel').color)
       .attr('stroke-opacity', 0.35)
       .attr('stroke-width', d => d.type === 'entity' ? 1.2 : Math.max(1, (d.value || 0.4) * 2.4))
       .attr('stroke-dasharray', d => d.type === 'entity' ? '3 3' : null);
 
-    const nodeG = g.append('g').selectAll('g').data(nodeList).join('g')
+    nodeG = g.append('g').selectAll('g').data(nodeList).join('g')
       .style('cursor', 'pointer')
       .call(d3.drag()
         .on('start', (e, d) => { if (!e.active) graphSim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
@@ -640,6 +640,8 @@
 
     updateLabelSizes();
     if (reheat) graphSim.alpha(1).restart();
+    // Initial camera: geniş ve ferah çerçeveleme
+    svg.call(zoom.transform, d3.zoomIdentity.translate(W * 0.08, H * 0.08).scale(0.85));
   }
 
   function showTip(e, d) {
