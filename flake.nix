@@ -1,5 +1,5 @@
 {
-  description = "xPalace - Multi-IDE MCP Hafıza Sunucusu";
+  description = "localmind - Sovereign AI Memory & Knowledge Graph System";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

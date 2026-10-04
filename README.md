@@ -42,33 +42,50 @@ Localmind, FastMCP mimarisi üzerinden LLM'inize şu otonom yetenekleri kazandı
 | :--- | :--- |
 | `hafizaya_yaz` | Bilgiyi akıllıca kaydeder, varlık çıkarımı yapar ve sınıflandırır. |
 | `hafizada_ara` | Zihin sarayında semantik benzerliğe göre arama yapar. |
+| `hafizayi_unut` | Bir anıyı arşivler (aktif görünümden kaldırır, veri kaybı olmadan saklar). |
 | `grafik_sorgula` | Bir kavramın veya kişinin Knowledge Graph üzerindeki bağlantı ağını çizer. |
 | `oturum_ozetle` | Uzun sohbetleri analiz edip yapılandırılmış kalıcı anılara dönüştürür. |
 | `hatirlat` | Uzun süredir bakılmayan ama "önemli" olarak işaretlenmiş anıları proaktif olarak hatırlatır. |
 | `gecmise_bak` | Son N gün içinde öğrenilen veya kaydedilen tüm bilgileri listeler. |
 | `profil_goster` | Hangi konularda daha çok düşündüğünüzü (oda ve etiket dağılımı) analiz eder. |
+| `oda_listele` | Tüm hafıza odalarını ve içerdikleri anı sayılarını listeler. |
+| `hafizayi_aktar` | Tüm aktif hafızayı JSON formatında dışa aktarır (yedek/export). |
 
 ---
 
 ## 🏗️ Mimari Topoloji
 
-Localmind, **Temmuz 2026** standartlarına uygun Stateless FastMCP mimarisi üzerine inşa edilmiştir.
+Localmind, **Ekim 2026** standartlarına uygun Stateless FastMCP mimarisi ve yerel D3.js Dashboard v2 üzerine inşa edilmiştir.
 
 ```mermaid
 graph TD
     %% İstemciler
-    A1[Open-WebUI] -->|HTTP / SSE| B[FastMCP Router]
-    A2[Continue IDE] -->|Stdio| B
+    A1[Open-WebUI / Web] -->|HTTP / SSE :8001| B[FastMCP Router]
+    A2[Continue / Antigravity / IDE] -->|Stdio| B
     
     %% Çekirdek
     B -->|Otonom Çağrılar| C{Memory Manager}
-    G[D3.js Dashboard] -.->|REST API| C
+    G[Dashboard v2 :8000] -.->|REST API / SSE| C
     
     %% Veritabanları ve AI
-    C -->|Semantik Kayıt| D[(ChromaDB)]
+    C -->|Semantik Vektörler| D[(ChromaDB)]
     C -->|Knowledge Graph| E[(SQLite)]
-    C <-->|Embeddings & NLP| F[Ollama]
+    C <-->|Embeddings & Sınıflandırma| F[Yerel Ollama]
 ```
+
+---
+
+## 🖥️ Dashboard v2 Özellikleri
+
+`127.0.0.1:8000` üzerinde çalışan modern ve tamamen çevrimdışı web arayüzü:
+
+* **Genel Bakış:** Canlı bellek nabzı, son anılar, sistem sağlık durumu ve hızlı kayıt.
+* **Bilgi Grafiği:** Obsidian tarzı galaksi kümelenmesi (constellation clustering), semantik bağlar ve akıllı odak/hover efektleri.
+* **Odalar (Memory Rooms):** Anıları konularına göre (`mimari`, `güvenlik`, `donanım`, `kişisel` vb.) filtreleme ve yönetme.
+* **Zaman Çizelgesi:** Kronolojik anı akışı ve etkileşimli filtreleme.
+* **Analitik:** Ebbinghaus unutma eğrisi, önem dağılımı ve etiket sıklığı grafikleri.
+* **Hatırlatmalar:** Proaktif önem/yaş skoruna göre unutulmaya yüz tutmuş anılar.
+* **Ağ İzolasyonu:** Yalnızca `127.0.0.1` (localhost) arayüzüne bağlıdır, dış ağlara kapalıdır.
 
 ---
 
@@ -90,17 +107,24 @@ pip install -r requirements.txt
 ### 2. İstemciye Göre Sunucuyu Başlatma
 Localmind, kullanacağınız arayüze göre farklı transport katmanları sunar:
 
-- **Open-WebUI için (HTTP MCP):**
+- **Open-WebUI için (HTTP MCP - 8001):**
   ```bash
   ./run_mcp_sse.sh
   ```
-- **Continue / VSCodium için (Stdio MCP):**
+- **Continue / Antigravity / IDE için (Stdio MCP):**
   ```bash
   ./run_mcp.sh
   ```
-- **D3.js Dashboard Arayüzü için:**
+- **Dashboard v2 Arayüzü için (8000):**
   ```bash
-  python server_sse.py
+  just dashboard
+  # veya: python server_sse.py
+  ```
+- **Systemd Servis Yönetimi:**
+  ```bash
+  just status   # Durumu gör
+  just restart  # Servisleri yeniden başlat
+  just logs     # Canlı log takibi
   ```
 
 ---
