@@ -39,7 +39,7 @@
     rooms: [], profile: null, health: null, reminders: null,
     loadedAt: 0, loading: null,
     route: { view: 'overview', param: null },
-    graph: { focus: null, showEntities: true, showSemantic: true },
+    graph: { focus: null, hover: null, showEntities: false, showSemantic: true, showAllLabels: false },
     timelineDays: 30,
   };
 
@@ -307,6 +307,7 @@
   }
 
   /* ─────────────────────────── VIEW: GRAPH ─────────────────────────── */
+  /* ─────────────────────────── VIEW: GRAPH ─────────────────────────── */
   function viewGraph(c) {
     if (state.graphError) { c.innerHTML = errorHTML(); return; }
     if (!window.d3) {
@@ -317,31 +318,50 @@
     const rooms = state.rooms;
     const controls = `<div class="controls" style="margin:0">
       <select class="field" id="gRoom"><option value="">Tüm odalar</option>${rooms.map(r => `<option value="${esc(r.key)}">${esc(r.label)} (${r.count})</option>`).join('')}</select>
-      <label class="switch"><input type="checkbox" id="gEntities" ${state.graph.showEntities ? 'checked' : ''}/><span class="track"></span>Varlıkları göster</label>
+      <label class="switch"><input type="checkbox" id="gLabels" ${state.graph.showAllLabels ? 'checked' : ''}/><span class="track"></span>Tüm etiketler</label>
+      <label class="switch"><input type="checkbox" id="gEntities" ${state.graph.showEntities ? 'checked' : ''}/><span class="track"></span>Varlıklar</label>
       <label class="switch"><input type="checkbox" id="gSemantic" ${state.graph.showSemantic ? 'checked' : ''}/><span class="track"></span>Anlamsal bağlar</label>
-      <button class="btn small" id="gReheat">↻ Yeniden düzenle</button>
+      <button class="btn small" id="gFit">⊡ Sığdır</button>
+      <button class="btn small" id="gReheat">↻ Düzenle</button>
     </div>`;
-    c.innerHTML = viewShell('Bilgi Grafiği', 'Anılar, kavramlar, kişiler ve teknolojiler arasındaki bağlar', controls) + `
+    c.innerHTML = viewShell('Bilgi Grafiği', 'Anılar, kavramlar ve mimari yapılar arasındaki semantik ağ', controls) + `
       <div class="graph-wrap">
         <div id="graphArea"></div>
-        <div class="graph-hint">Tekerle: yakınlaştır · Sürükle: taşı · Düğüme tıkla: detay</div>
+        <div class="graph-hint">Tekerle: yakınlaştır · Sürükle: taşı · Üzerine gel: bağlantıları parla · Düğüme tıkla: detay</div>
         <div class="graph-legend" id="graphLegend"></div>
       </div>`;
 
     const rerender = () => {
+      state.graph.showAllLabels = $('#gLabels').checked;
       state.graph.showEntities = $('#gEntities').checked;
       state.graph.showSemantic = $('#gSemantic').checked;
       state.graph.roomFilter = $('#gRoom').value;
       renderGraph();
     };
     $('#gRoom').onchange = rerender;
+    $('#gLabels').onchange = rerender;
     $('#gEntities').onchange = rerender;
     $('#gSemantic').onchange = rerender;
+    $('#gFit').onclick = () => resetGraphZoom();
     $('#gReheat').onclick = () => renderGraph(true);
     renderGraph(true);
   }
 
   let graphSim = null;
+  let graphZoom = null;
+  let graphSvg = null;
+
+  function resetGraphZoom() {
+    if (graphSvg && graphZoom) {
+      const area = $('#graphArea');
+      const W = area?.clientWidth || 800, H = area?.clientHeight || 520;
+      graphSvg.transition().duration(500).call(
+        graphZoom.transform,
+        d3.zoomIdentity.translate(W * 0.08, H * 0.08).scale(0.85)
+      );
+    }
+  }
+
   function renderGraph(reheat) {
     const area = $('#graphArea'); if (!area) return;
     const W = area.clientWidth || 800, H = area.clientHeight || 520;
@@ -356,7 +376,7 @@
     const nodes = mem.map(m => ({
       id: m.id, label: m.konu, oda: m.oda || 'genel', importance: m.importance,
       content: m.bilgi, tags: m.tags, created_at: m.created_at, type: 'memory',
-      r: 6 + clamp(m.importance, 1, 10) * 0.8,
+      r: 6.5 + clamp(m.importance, 1, 10) * 0.7,
     }));
 
     let links = [];
@@ -374,7 +394,6 @@
         const isSrcEnt = srcStr.startsWith('entity_');
         const isTgtEnt = tgtStr.startsWith('entity_');
 
-        // Oda filtresi varsa: sadece o odaya veya bağlı varlıklara izin ver
         if (roomFilter && !isSrcMem && !isTgtMem) continue;
 
         if (isSrcEnt) {
@@ -404,17 +423,32 @@
     if (!nodes.length) { area.innerHTML = emptyHTML('Bu filtrede gösterilecek anı yok.', '🕸️'); return; }
 
     const svg = d3.select(area).append('svg').attr('width', W).attr('height', H);
+    graphSvg = svg;
     const g = svg.append('g');
-    svg.call(d3.zoom().scaleExtent([0.15, 4]).on('zoom', e => g.attr('transform', e.transform)));
+
+    let currentScale = 0.85;
+    const zoom = d3.zoom().scaleExtent([0.15, 4.5]).on('zoom', e => {
+      currentScale = e.transform.k;
+      g.attr('transform', e.transform);
+      updateLabelSizes();
+    });
+    graphZoom = zoom;
+    svg.call(zoom);
+
+    // Initial camera: geniş ve ferah çerçeveleme
+    svg.call(zoom.transform, d3.zoomIdentity.translate(W * 0.08, H * 0.08).scale(0.85));
 
     const nodeList = nodes.map(n => ({ ...n }));
     const byId = new Map(nodeList.map(n => [n.id, n]));
     const linkList = links.map(l => ({ ...l })).filter(l => byId.has(l.source) && byId.has(l.target));
 
-    const focus = state.graph.focus;
-    const nb = new Set();
-    if (focus) { nb.add(focus); linkList.forEach(l => { if (l.source === focus) nb.add(l.target); if (l.target === focus) nb.add(l.source); }); }
-    const hasFocus = focus && nb.size > 1;
+    // Komşuluk haritası
+    const neighbors = new Map();
+    nodeList.forEach(n => neighbors.set(n.id, new Set()));
+    linkList.forEach(l => {
+      neighbors.get(l.source)?.add(l.target);
+      neighbors.get(l.target)?.add(l.source);
+    });
 
     const degree = new Map();
     linkList.forEach(l => {
@@ -424,10 +458,10 @@
 
     const cx = W / 2, cy = H / 2;
 
-    // Odalara göre galaksi / takımyıldızı merkezleri hesapla
+    // Odalara göre geniş ve ferah galaksi merkezleri
     const roomKeys = state.rooms.map(r => r.key);
     const roomCenters = {};
-    const R_ROOM = Math.min(W, H) * 0.30;
+    const R_ROOM = Math.min(W, H) * 0.38;
     roomKeys.forEach((key, idx) => {
       const angle = (idx / Math.max(1, roomKeys.length)) * 2 * Math.PI - Math.PI / 2;
       roomCenters[key] = {
@@ -439,80 +473,163 @@
     nodeList.forEach(n => {
       if (n.x == null) {
         const targetCenter = (!roomFilter && roomCenters[n.oda]) ? roomCenters[n.oda] : { x: cx, y: cy };
-        n.x = targetCenter.x + (Math.random() - 0.5) * 60;
-        n.y = targetCenter.y + (Math.random() - 0.5) * 60;
+        n.x = targetCenter.x + (Math.random() - 0.5) * 80;
+        n.y = targetCenter.y + (Math.random() - 0.5) * 80;
       }
     });
 
     graphSim = d3.forceSimulation(nodeList)
       .force('link', d3.forceLink(linkList).id(d => d.id)
-        .distance(d => d.type === 'entity' ? 60 : Math.max(65, 140 - (d.value || 0.5) * 75))
-        .strength(d => d.type === 'entity' ? 0.6 : 0.35))
-      .force('charge', d3.forceManyBody().strength(d => d.type === 'entity' ? -70 : -130).distanceMax(420))
-      .force('collision', d3.forceCollide(d => d.r + 13));
+        .distance(d => d.type === 'entity' ? 70 : Math.max(85, 175 - (d.value || 0.5) * 90))
+        .strength(d => d.type === 'entity' ? 0.7 : 0.28))
+      .force('charge', d3.forceManyBody().strength(d => d.type === 'entity' ? -90 : -240).distanceMax(550))
+      .force('collision', d3.forceCollide(d => d.r + 16));
 
     if (!roomFilter) {
-      // Odalarına göre yumuşak galaksi çekimi
       graphSim
-        .force('center', d3.forceCenter(cx, cy).strength(0.04))
-        .force('roomX', d3.forceX(d => (d.type === 'entity' ? cx : (roomCenters[d.oda]?.x || cx))).strength(0.12))
-        .force('roomY', d3.forceY(d => (d.type === 'entity' ? cy : (roomCenters[d.oda]?.y || cy))).strength(0.12));
+        .force('center', d3.forceCenter(cx, cy).strength(0.025))
+        .force('roomX', d3.forceX(d => (d.type === 'entity' ? cx : (roomCenters[d.oda]?.x || cx))).strength(0.10))
+        .force('roomY', d3.forceY(d => (d.type === 'entity' ? cy : (roomCenters[d.oda]?.y || cy))).strength(0.10));
     } else {
       graphSim
         .force('center', d3.forceCenter(cx, cy).strength(0.08))
-        .force('x', d3.forceX(cx).strength(0.06))
-        .force('y', d3.forceY(cy).strength(0.06));
+        .force('x', d3.forceX(cx).strength(0.05))
+        .force('y', d3.forceY(cy).strength(0.05));
     }
 
     const link = g.append('g').selectAll('line').data(linkList).join('line')
       .attr('stroke', d => d.type === 'entity' ? ENTITY_COLOR : roomMeta(byId.get(d.source.id || d.source)?.oda || 'genel').color)
-      .attr('stroke-opacity', d => { if (!hasFocus) return d.type === 'entity' ? 0.4 : 0.45; return (nb.has(d.source.id || d.source) && nb.has(d.target.id || d.target)) ? 0.85 : 0.05; })
-      .attr('stroke-width', d => d.type === 'entity' ? 1.2 : Math.max(1, (d.value || 0.4) * 2.8))
+      .attr('stroke-opacity', 0.35)
+      .attr('stroke-width', d => d.type === 'entity' ? 1.2 : Math.max(1, (d.value || 0.4) * 2.4))
       .attr('stroke-dasharray', d => d.type === 'entity' ? '3 3' : null);
 
     const nodeG = g.append('g').selectAll('g').data(nodeList).join('g')
       .style('cursor', 'pointer')
-      .on('mouseover', (e, d) => showTip(e, d))
-      .on('mousemove', moveTip)
-      .on('mouseout', hideTip)
-      .on('click', (e, d) => {
-        e.stopPropagation();
-        if (d.type === 'entity') { toast('Varlık: ' + d.label, ''); return; }
-        state.graph.focus = state.graph.focus === d.id ? null : d.id;
-        renderGraph();
-        openMemoryById(d.id);
-      })
       .call(d3.drag()
         .on('start', (e, d) => { if (!e.active) graphSim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
         .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
         .on('end', (e, d) => { if (!e.active) graphSim.alphaTarget(0); d.fx = null; d.fy = null; }));
 
-    const dim = d => (hasFocus && !nb.has(d.id)) ? 0.15 : 1;
-
+    // Düğüm grafikleri
     nodeG.each(function (d) {
       const g2 = d3.select(this);
-      const deg = degree.get(d.id) || 0;
-      const isImportant = (d.importance || 5) >= 7;
-      // Etiketi göster: Varlıklar, oda filtresindeyken hepsi, odaklanılan komşular, önem >= 7 veya bağlantılı anılar
-      const labelIt = d.type === 'entity' || !!roomFilter || isImportant || deg >= 1 || nb.has(d.id);
+      const isImportant = (d.importance || 5) >= 8;
 
       if (d.type === 'entity') {
         const s = d.r;
-        g2.append('rect').attr('x', -s).attr('y', -s).attr('width', s * 2).attr('height', s * 2).attr('rx', 3)
-          .attr('transform', 'rotate(45)').attr('fill', ENTITY_COLOR).attr('opacity', () => dim(d) * 0.9)
+        g2.append('rect').attr('class', 'main-node')
+          .attr('x', -s).attr('y', -s).attr('width', s * 2).attr('height', s * 2).attr('rx', 3)
+          .attr('transform', 'rotate(45)').attr('fill', ENTITY_COLOR).attr('opacity', 0.9)
           .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
-        if (labelIt) g2.append('text').attr('text-anchor', 'middle').attr('y', s + 13).attr('font-size', 9.5)
-          .attr('fill', 'var(--text-dim)').attr('opacity', () => dim(d)).attr('stroke', 'var(--bg)').attr('stroke-width', 2.5)
-          .attr('paint-order', 'stroke').text(d.label.length > 20 ? d.label.slice(0, 18) + '…' : d.label);
       } else {
         const col = roomMeta(d.oda).color;
-        g2.append('circle').attr('r', d.r + 5).attr('fill', col).attr('opacity', () => dim(d) * 0.15);
-        g2.append('circle').attr('r', d.r).attr('fill', col).attr('opacity', () => dim(d) * 0.92)
-          .attr('stroke', d.id === focus ? '#fff' : 'var(--bg)').attr('stroke-width', d.id === focus ? 2.5 : 1.5);
-        if (labelIt) g2.append('text').attr('text-anchor', 'middle').attr('y', d.r + 12).attr('font-size', isImportant ? 10 : 9.2)
-          .attr('font-weight', isImportant ? '600' : '400')
-          .attr('fill', 'var(--text)').attr('opacity', () => dim(d) * 0.92).attr('stroke', 'var(--bg)').attr('stroke-width', 2.5)
-          .attr('paint-order', 'stroke').text(d.label.length > 22 ? d.label.slice(0, 20) + '…' : d.label);
+        // Dış hafif parıltı (halo)
+        g2.append('circle').attr('class', 'halo')
+          .attr('r', d.r + (isImportant ? 6 : 4)).attr('fill', col).attr('opacity', isImportant ? 0.22 : 0.12);
+        // Ana daire
+        g2.append('circle').attr('class', 'main-node')
+          .attr('r', d.r).attr('fill', col).attr('opacity', 0.94)
+          .attr('stroke', d.id === state.graph.focus ? '#fff' : 'var(--bg)')
+          .attr('stroke-width', d.id === state.graph.focus ? 2.5 : 1.5);
+      }
+
+      // Net etiket (font boyutu zoom sırasında counter-scale edilecek)
+      g2.append('text').attr('class', 'node-label')
+        .attr('text-anchor', 'middle')
+        .attr('y', d.r + 12)
+        .attr('font-size', '10px')
+        .attr('font-weight', isImportant ? '600' : '400')
+        .attr('fill', d.type === 'entity' ? 'var(--text-dim)' : 'var(--text)')
+        .attr('stroke', 'var(--bg)').attr('stroke-width', '2.5px')
+        .attr('paint-order', 'stroke')
+        .text(d.label.length > 20 ? d.label.slice(0, 18) + '…' : d.label);
+    });
+
+    let hoveredId = null;
+
+    function updateVisualState() {
+      const activeId = hoveredId || state.graph.focus;
+      const activeNb = activeId ? (neighbors.get(activeId) || new Set()) : null;
+      const isFiltered = !!activeId;
+
+      // Düğümleri güncelle
+      nodeG.each(function (d) {
+        const el = d3.select(this);
+        const isSelf = d.id === activeId;
+        const isNeighbor = activeNb && activeNb.has(d.id);
+        const isActive = !isFiltered || isSelf || isNeighbor;
+
+        el.select('.main-node')
+          .attr('opacity', isActive ? 1.0 : 0.12)
+          .attr('stroke', isSelf ? '#ffffff' : (isNeighbor ? '#c4b5fd' : 'var(--bg)'))
+          .attr('stroke-width', isSelf ? 2.6 : (isNeighbor ? 2.0 : 1.5));
+
+        el.select('.halo')
+          .attr('opacity', isSelf ? 0.4 : (isNeighbor ? 0.25 : 0.02));
+
+        // Obsidian tarzı akıllı etiket gösterimi:
+        // Yalnızca aktif düğüm, komşuları, veya kullanıcı "Tüm etiketler" açtıysa göster
+        const showLabel = isSelf || isNeighbor || state.graph.showAllLabels || (currentScale >= 1.6 && d.importance >= 7);
+        el.select('.node-label')
+          .style('display', showLabel ? 'block' : 'none')
+          .attr('opacity', isSelf ? 1.0 : (isNeighbor ? 0.95 : 0.5));
+      });
+
+      // Bağlantıları güncelle
+      link
+        .attr('stroke-opacity', l => {
+          if (!isFiltered) return l.type === 'entity' ? 0.4 : 0.35;
+          const s = l.source.id || l.source;
+          const t = l.target.id || l.target;
+          if (s === activeId || t === activeId) return 0.9;
+          return 0.04;
+        })
+        .attr('stroke-width', l => {
+          const s = l.source.id || l.source;
+          const t = l.target.id || l.target;
+          if (s === activeId || t === activeId) return 2.6;
+          return l.type === 'entity' ? 1.2 : Math.max(1, (l.value || 0.4) * 2.2);
+        });
+    }
+
+    function updateLabelSizes() {
+      // Counter-scale: Zoom büyüse bile yazı boyutu EKRANDA ~10px sabit kalır!
+      const targetSize = Math.max(7, Math.min(13, 10.5 / currentScale));
+      const targetStroke = Math.max(1.2, 2.5 / currentScale);
+      nodeG.selectAll('.node-label')
+        .attr('font-size', targetSize + 'px')
+        .attr('stroke-width', targetStroke + 'px')
+        .attr('y', d => d.r + (12 / currentScale));
+
+      updateVisualState();
+    }
+
+    // Etkileşimler
+    nodeG
+      .on('mouseenter', (e, d) => {
+        hoveredId = d.id;
+        updateVisualState();
+        showTip(e, d);
+      })
+      .on('mousemove', moveTip)
+      .on('mouseleave', () => {
+        hoveredId = null;
+        updateVisualState();
+        hideTip();
+      })
+      .on('click', (e, d) => {
+        e.stopPropagation();
+        if (d.type === 'entity') { toast('Varlık: ' + d.label, ''); return; }
+        state.graph.focus = (state.graph.focus === d.id) ? null : d.id;
+        updateVisualState();
+        openMemoryById(d.id);
+      });
+
+    // Boş alana tıklanınca odağı kaldır
+    svg.on('click', () => {
+      if (state.graph.focus) {
+        state.graph.focus = null;
+        updateVisualState();
       }
     });
 
@@ -520,6 +637,8 @@
       link.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
       nodeG.attr('transform', d => `translate(${clamp(d.x, 20, W - 20)},${clamp(d.y, 20, H - 20)})`);
     });
+
+    updateLabelSizes();
     if (reheat) graphSim.alpha(1).restart();
   }
 

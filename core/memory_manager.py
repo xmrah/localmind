@@ -514,12 +514,12 @@ class MemoryManager:
                     for i, src_id in enumerate(raw_ids):
                         if src_id not in memory_id_set:
                             continue
-                        top_indices = np.argsort(sim_matrix[i])[-3:]
+                        top_indices = np.argsort(sim_matrix[i])[-2:]
 
-                        # En iyi 1. komşu (>= 0.42)
+                        # En iyi 1. komşu (>= 0.50)
                         best_j = top_indices[-1]
                         sim_best = float(sim_matrix[i, best_j])
-                        if sim_best >= 0.42:
+                        if sim_best >= 0.50:
                             tgt_id = raw_ids[best_j]
                             if tgt_id in memory_id_set and tgt_id != src_id:
                                 pair = tuple(sorted([src_id, tgt_id]))
@@ -532,11 +532,12 @@ class MemoryManager:
                                         "type": "semantic"
                                     })
 
-                        # 2. ve 3. komşular (>= 0.52)
-                        for j in top_indices[:-1]:
-                            sim = float(sim_matrix[i, j])
-                            if sim >= 0.52:
-                                tgt_id = raw_ids[j]
+                        # 2. komşu (sadece çok yüksek anlamsal yakınlık varsa >= 0.58)
+                        if len(top_indices) > 1:
+                            sec_j = top_indices[-2]
+                            sim_sec = float(sim_matrix[i, sec_j])
+                            if sim_sec >= 0.58:
+                                tgt_id = raw_ids[sec_j]
                                 if tgt_id in memory_id_set and tgt_id != src_id:
                                     pair = tuple(sorted([src_id, tgt_id]))
                                     if pair not in seen:
@@ -544,7 +545,7 @@ class MemoryManager:
                                         links.append({
                                             "source": src_id,
                                             "target": tgt_id,
-                                            "value": round(sim, 2),
+                                            "value": round(sim_sec, 2),
                                             "type": "semantic"
                                         })
             except Exception as e:
@@ -554,19 +555,23 @@ class MemoryManager:
         try:
             conn = sqlite3.connect(GRAPH_DB_PATH)
             entity_rels = conn.execute(
-                "SELECT source_name, relation, target_name, memory_id FROM relations LIMIT 150"
+                "SELECT source_name, relation, target_name, memory_id FROM relations LIMIT 100"
             ).fetchall()
             conn.close()
 
             memory_ids = {m.id for m in memories}
             entity_nodes = {}
-            bad_entities = {"yok", "-", "--", "none", "null", "6 sayfa"}
+            bad_entities = {
+                "yok", "-", "--", "none", "null", "6 sayfa",
+                "home", "settings", "timeline", "graph", "analytics",
+                "memory rooms", "arama", "istatistik", "son anılar"
+            }
 
             for src, rel, tgt, mem_id in entity_rels:
                 s = src.strip()
                 t = tgt.strip()
                 r = rel.strip()
-                if not s or not t or len(s) < 2 or len(t) < 2:
+                if not s or not t or len(s) < 2 or len(t) < 2 or len(s) > 30 or len(t) > 30:
                     continue
                 if s.lower() in bad_entities or t.lower() in bad_entities:
                     continue
