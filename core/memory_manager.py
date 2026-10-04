@@ -225,6 +225,8 @@ class MemoryManager:
                 konu=meta.get("konu", ""),
                 bilgi=data["documents"][i],
                 oda=meta.get("oda", "genel"),
+                kanat=meta.get("kanat", "genel"),
+                dolap=meta.get("dolap", "genel"),
                 agent_id=meta.get("agent_id", "user"),
                 importance=float(meta.get("importance", 7.0)),
                 access_count=int(meta.get("access_count", 0)),
@@ -241,7 +243,9 @@ class MemoryManager:
         if total == 0:
             return []
 
-        where_filter = {"oda": oda} if oda else None
+        where_filter = {}
+        if oda: where_filter["oda"] = oda
+        if not where_filter: where_filter = None
         # Küçük koleksiyonlarda daha fazla aday çek; benzer sonuçlar HNSW'de alt sıralarda olabilir
         n_query = min(max(n * 4, 20), total)
 
@@ -328,6 +332,8 @@ class MemoryManager:
         konu: str,
         bilgi: str,
         oda: str | None = None,
+        kanat: str = "genel",
+        dolap: str = "genel",
         agent_id: str = "user",
         importance: float = 7.0
     ) -> dict:
@@ -386,6 +392,8 @@ class MemoryManager:
         meta = {
             "konu": konu,
             "oda": oda,
+            "kanat": kanat,
+            "dolap": dolap,
             "agent_id": agent_id,
             "importance": str(importance),
             "access_count": "0",

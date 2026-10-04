@@ -14,6 +14,8 @@ class Memory(BaseModel):
     konu: str
     bilgi: str
     oda: str = "genel"
+    kanat: str = "genel"           # En üst bağlam (Wing)
+    dolap: str = "genel"           # Alt konu öbeği (Closet)
     agent_id: str = "user"           # Kim yazdı: "user", "antigravity", "continue"
     importance: float = 7.0          # 1-10 arası önem skoru
     access_count: int = 0            # Kaç kez erişildi

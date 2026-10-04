@@ -41,12 +41,14 @@ async def hafizaya_yaz(
     konu: str = Field(..., description="Anının başlığı (kısa, açıklayıcı)"),
     bilgi: str = Field(..., description="Kaydedilecek bilginin tamamı"),
     oda: str | None = Field(None, description="Oda (opsiyonel, boş bırakılırsa otomatik belirlenir)", json_schema_extra={"enum": ["mimari", "guvenlik", "donanim", "ogrenme", "kisisel", "genel"]}),
+    kanat: str = Field("genel", description="Kanat / En üst bağlam (opsiyonel)"),
+    dolap: str = Field("genel", description="Dolap / Konu öbeği (opsiyonel)"),
     importance: float = Field(7.0, description="Önem skoru 1-10 (varsayılan: 7)"),
     agent_id: str = Field("user", description="Yazan ajan kimliği (opsiyonel, varsayılan: user)")
 ) -> str:
     """Bir bilgiyi Zihin Sarayı'na akıllıca kaydet. Otomatik sınıflandırma, upsert ve entity çıkarımı yapar."""
     mgr = get_manager()
-    result = await mgr.add_memory(konu=konu, bilgi=bilgi, oda=oda, agent_id=agent_id, importance=importance)
+    result = await mgr.add_memory(konu=konu, bilgi=bilgi, oda=oda, kanat=kanat, dolap=dolap, agent_id=agent_id, importance=importance)
     return result.get("message", json.dumps(result, ensure_ascii=False))
 
 
