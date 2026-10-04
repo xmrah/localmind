@@ -58,6 +58,7 @@ class MemoryManager:
     def _init_graph_db(self):
         """Entity-relation ve FTS5 veritabanını başlat."""
         conn = sqlite3.connect(GRAPH_DB_PATH)
+        conn.execute("PRAGMA journal_mode=WAL;")
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS entities (
                 id TEXT PRIMARY KEY,
@@ -89,7 +90,9 @@ class MemoryManager:
 
     def _sync_fts_if_needed(self):
         """FTS5 tablosu ChromaDB'den geride kalmışsa senkronize et."""
-        conn = sqlite3.connect(GRAPH_DB_PATH)
+        # Graph DB'yi read-only modda açarak kilitlemeleri önle
+        uri_path = f"file:{GRAPH_DB_PATH}?mode=ro"
+        conn = sqlite3.connect(uri_path, uri=True)
         fts_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
         conn.close()
         
@@ -103,7 +106,8 @@ class MemoryManager:
             return
         log.info(f"FTS5 senkronizasyon: {fts_count}/{unarchived_count}")
         data = self.collection.get(include=["documents", "metadatas"])
-        conn = sqlite3.connect(GRAPH_DB_PATH)
+        uri_path = f"file:{GRAPH_DB_PATH}?mode=ro"
+        conn = sqlite3.connect(uri_path, uri=True)
         for i, mem_id in enumerate(data["ids"]):
             meta = data["metadatas"][i]
             if meta.get("archived", "false") == "true":
@@ -125,7 +129,8 @@ class MemoryManager:
         """FTS5 tablosuna ekle veya güncelle."""
         try:
             tags_str = " ".join(tags) if tags else ""
-            conn = sqlite3.connect(GRAPH_DB_PATH)
+            uri_path = f"file:{GRAPH_DB_PATH}?mode=ro"
+            conn = sqlite3.connect(uri_path, uri=True)
             conn.execute("DELETE FROM memories_fts WHERE memory_id=?", (memory_id,))
             conn.execute(
                 "INSERT INTO memories_fts(memory_id, konu, content, tags) VALUES(?,?,?,?)",
@@ -145,7 +150,8 @@ class MemoryManager:
             return {}
         fts_query = " OR ".join(f'"{w}"' for w in words[:10])
         try:
-            conn = sqlite3.connect(GRAPH_DB_PATH)
+            uri_path = f"file:{GRAPH_DB_PATH}?mode=ro"
+            conn = sqlite3.connect(uri_path, uri=True)
             rows = conn.execute(
                 "SELECT memory_id, rank FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
                 (fts_query, limit)
