@@ -61,22 +61,24 @@ Localmind; eşzamanlı MCP istemcileri, yüksek hızlı yerel vektör motoru, WA
 
 ```mermaid
 graph TD
-    subgraph İstemciler (Clients)
-        C1[Open-WebUI / Web Arayüzü] -->|HTTP / SSE :8001| R1[FastMCP Streamable Router]
-        C2[Continue / Antigravity / IDE] -->|Stdio IPC| R2[FastMCP Stdio Server]
-        C3[Yönetim Konsolu / Dashboard] -->|REST API & SSE :8000| S1[FastAPI Server]
+    subgraph Clients ["İstemciler (Clients)"]
+        C1["Open-WebUI / Web Arayüzü"] -->|HTTP / SSE :8001| R1["FastMCP Streamable Router"]
+        C2["Continue / Antigravity / IDE"] -->|Stdio IPC| R2["FastMCP Stdio Server"]
+        C3["Yönetim Konsolu / Dashboard"] -->|REST API & SSE :8000| S1["FastAPI Server"]
     end
 
-    subgraph Çekirdek Motor (Core Engine)
-        R1 & R2 & S1 --> MM[MemoryManager]
-        CFG[(config.json)] <-->|Dinamik Parametreler| MM
-        MM <--> INT[Intelligence Layer]
+    subgraph Core ["Çekirdek Motor (Core Engine)"]
+        R1 --> MM["MemoryManager"]
+        R2 --> MM
+        S1 --> MM
+        CFG[("config.json")] <-->|Dinamik Parametreler| MM
+        MM <--> INT["Intelligence Layer"]
     end
 
-    subgraph Depolama & Yerel Zeka
-        MM -->|Vektörler & Metadata| VDB[(ChromaDB : zihin_sarayi)]
-        MM -->|Varlıklar & WAL Grafiği| GDB[(SQLite : graph.db)]
-        INT <-->|Sınıflandırma, Upsert, Varlık Çıkarımı| OLLAMA[Yerel Ollama :11434]
+    subgraph Storage ["Depolama & Yerel Zeka"]
+        MM -->|Vektörler & Metadata| VDB[("ChromaDB: zihin_sarayi")]
+        MM -->|Varlıklar & WAL Grafiği| GDB[("SQLite: graph.db")]
+        INT <-->|Sınıflandırma & Varlık Çıkarımı| OLLAMA["Yerel Ollama :11434"]
     end
 ```
 
