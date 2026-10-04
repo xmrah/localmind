@@ -60,7 +60,7 @@
 
   function daysOld(iso) {
     const t = Date.parse(iso);
-    if (isNaN(t)) return 0;
+    if (isNaN(t) || t < 946684800000) return 0;
     return Math.max(0, (Date.now() - t) / 86400000);
   }
   function fmtDate(iso) {
@@ -299,7 +299,8 @@
       ${sub ? `<div class="kpi-sub">${esc(sub)}</div>` : ''}</div>`;
   }
   function barRow(label, value, max, color) {
-    const w = max ? clamp(value / max * 100, 3, 100) : 0;
+    const effectiveMax = Math.max(max, 5);
+    const w = clamp((value / effectiveMax) * 100, 5, 100);
     return `<div class="bar-row"><span class="bl" title="${esc(label)}">${esc(label)}</span>
       <span class="bar-track"><span class="bar-fill" style="width:${w}%;background:${color}"></span></span>
       <span class="bv">${value}</span></div>`;
@@ -608,11 +609,18 @@
     const weekly = dailyCounts(mem, 90);
     const avgImp = (mem.reduce((a, m) => a + m.importance, 0) / mem.length);
     const avgLive = (mem.reduce((a, m) => a + liveness(m), 0) / mem.length);
-    const oldest = mem.reduce((a, m) => (Date.parse(m.created_at) < Date.parse(a.created_at) ? m : a), mem[0]);
+    const validMem = mem.filter(m => {
+      const t = Date.parse(m.created_at);
+      return !isNaN(t) && t > 946684800000;
+    });
+    const oldest = (validMem.length ? validMem : mem).reduce((a, m) => (Date.parse(m.created_at) < Date.parse(a.created_at) ? m : a), mem[0]);
+
+    const archCount = state.health?.memories && state.health.memories > mem.length ? (state.health.memories - mem.length) : 0;
+    const countSub = archCount > 0 ? `${archCount} arşivde (${state.health.memories} toplam)` : 'aktif kayıt';
 
     c.innerHTML = viewShell('Analitik', 'Oda, etiket, önem ve unutma eğrisi analizleri', '') + `
       <div class="grid cols-kpi" style="margin-bottom:16px">
-        ${kpi('Anı', mem.length, 'aktif kayıt', 'var(--violet)')}
+        ${kpi('Aktif Anı', mem.length, countSub, 'var(--violet)')}
         ${kpi('Ort. Önem', avgImp.toFixed(2), '10 üzerinden', 'var(--amber)')}
         ${kpi('Ort. Canlılık', avgLive.toFixed(2), 'unutma sonrası', 'var(--cyan)')}
         ${kpi('En Eski Anı', ago(oldest.created_at), fmtDate(oldest.created_at), 'var(--blue)')}
@@ -877,21 +885,28 @@
 
   function decayScatter(mem) {
     const W = 560, H = 200, pad = 34;
-    const maxDays = Math.max(7, ...mem.map(m => daysOld(m.created_at)));
+    const validMem = mem.filter(m => {
+      const t = Date.parse(m.created_at);
+      return !isNaN(t) && t > 946684800000;
+    });
+    const items = validMem.length ? validMem : mem;
+    const maxDays = Math.max(7, ...items.map(m => daysOld(m.created_at)));
     const px = d => pad + (d / maxDays) * (W - pad * 2);
     const py = v => H - pad - (clamp(v, 0, 10) / 10) * (H - pad * 2);
     let path = '';
     for (let d = 0; d <= maxDays; d += Math.max(1, maxDays / 60)) path += `${path ? 'L' : 'M'}${px(d).toFixed(1)},${py(10 * Math.pow(DECAY, d)).toFixed(1)} `;
-    const pts = mem.slice(0, 400).map(m => {
+    const pts = items.slice(0, 400).map(m => {
       const c = roomMeta(m.oda).color;
-      return `<circle cx="${px(daysOld(m.created_at)).toFixed(1)}" cy="${py(liveness(m)).toFixed(1)}" r="3.4" fill="${c}" opacity="0.72"><title>${esc(m.konu)}</title></circle>`;
+      const d = daysOld(m.created_at);
+      const l = liveness(m);
+      return `<circle cx="${px(d).toFixed(1)}" cy="${py(l).toFixed(1)}" r="3.4" fill="${c}" opacity="0.75"><title>${esc(m.konu)}: ${Math.round(d)} gün önce, canlılık ${l.toFixed(1)}/10 (önem ${m.importance})</title></circle>`;
     }).join('');
     const yTicks = [0, 2.5, 5, 7.5, 10].map(v => `<text x="${pad - 6}" y="${py(v) + 3}" text-anchor="end" font-size="9" fill="var(--text-faint)">${v}</text><line x1="${pad}" y1="${py(v)}" x2="${W - pad}" y2="${py(v)}" stroke="var(--border-soft)"/>`).join('');
     return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:200px">${yTicks}
       <path d="${path}" fill="none" stroke="var(--text-faint)" stroke-width="1.4" stroke-dasharray="4 4"/>
       ${pts}
       <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="var(--border)"/>
-      <text x="${W - pad}" y="${H - pad + 14}" text-anchor="end" font-size="9" fill="var(--text-faint)">gün →</text>
+      <text x="${W - pad}" y="${H - pad + 14}" text-anchor="end" font-size="9" fill="var(--text-faint)">${Math.round(maxDays)} gün →</text>
       <text x="${pad}" y="14" font-size="9" fill="var(--text-faint)">canlılık ↑</text></svg>`;
   }
 

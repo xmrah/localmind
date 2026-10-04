@@ -183,8 +183,8 @@ class MemoryManager:
                 agent_id=meta.get("agent_id", "user"),
                 importance=float(meta.get("importance", 7.0)),
                 access_count=int(meta.get("access_count", 0)),
-                created_at=meta.get("created_at", "1970-01-01T00:00:00+00:00"),
-                updated_at=meta.get("updated_at", "1970-01-01T00:00:00+00:00"),
+                created_at=meta.get("created_at") or meta.get("updated_at") or datetime.now().astimezone().isoformat(),
+                updated_at=meta.get("updated_at") or datetime.now().astimezone().isoformat(),
                 tags=json.loads(meta.get("tags", "[]")),
                 archived=meta.get("archived", "false") == "true"
             ))

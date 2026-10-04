@@ -19,6 +19,14 @@ start:
 dashboard:
     python server_sse.py
 
+# Servisleri yeniden başlat (systemd)
+restart:
+    sudo systemctl restart localmind localmind-mcp-sse
+
+# Servis durumlarını kontrol et
+status:
+    systemctl status localmind localmind-mcp-sse
+
 # Logları takip et
 logs:
     journalctl -u localmind -f
