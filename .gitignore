@@ -11,6 +11,6 @@ chroma_db/
 exports/
 .vscode/
 *.log
-gemma*.sh
-*_sonuclari*.md
-dashboard.eski/
+docs/llm_benchmarks/
+gemma*
+gemini*
