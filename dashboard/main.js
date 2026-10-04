@@ -23,7 +23,7 @@
   };
   const FALLBACK = ['#818cf8', '#f472b6', '#34d399', '#fbbf24', '#fb923c', '#60a5fa', '#a78bfa', '#2dd4bf'];
   const ENTITY_COLOR = '#eab308';
-  const DECAY = 0.99;
+  let DECAY = 0.99;
 
   function roomMeta(name) {
     const key = (name || 'genel').toLowerCase();
@@ -40,7 +40,7 @@
     loadedAt: 0, loading: null,
     route: { view: 'overview', param: null },
     graph: { focus: null, hover: null, showEntities: false, showSemantic: true, showAllLabels: false },
-    timelineDays: 30,
+    timelineDays: 3650,
   };
 
   /* ─────────────────────────── UTILS ─────────────────────────── */
@@ -102,6 +102,7 @@
       const nodes = g.nodes || [];
       state.memories = nodes.filter(n => n.type === 'memory' && n.oda !== 'entity')
         .map(n => ({ id: n.id, konu: n.label, bilgi: n.content, oda: n.oda || 'genel',
+                     kanat: n.kanat || 'genel', dolap: n.dolap || 'genel',
                      importance: Number(n.importance) || 7, tags: n.tags || [], created_at: n.created_at || '' }));
       state.entities = nodes.filter(n => n.type === 'entity');
       state.links = g.links || [];
@@ -112,8 +113,16 @@
   }
 
   async function loadHeader() {
-    const [health, profile] = await Promise.all([api('/api/health'), api('/api/profile')]);
+    const [health, profile, setRes] = await Promise.all([
+      api('/api/health'),
+      api('/api/profile'),
+      api('/api/settings')
+    ]);
     state.health = health; state.profile = profile;
+    if (setRes && setRes.config) {
+      state.config = setRes.config;
+      if (setRes.config.decay_factor) DECAY = Number(setRes.config.decay_factor);
+    }
     renderHeaderStatus();
   }
 
@@ -210,6 +219,8 @@
     else if (v === 'timeline') viewTimeline(c);
     else if (v === 'analytics') viewAnalytics(c);
     else if (v === 'reminders') viewReminders(c);
+    else if (v === 'archive') await viewArchive(c);
+    else if (v === 'settings') viewSettings(c);
     else await viewOverview(c);
   }
 
@@ -878,15 +889,21 @@
   function memItem(m) {
     const meta = roomMeta(m.oda);
     const score = m._score != null ? `<span class="sr-score">%${(m._score * 100).toFixed(0)}</span>` : '';
+    const wingBadge = m.kanat && m.kanat !== 'genel' ? `<span class="badge wing" title="Kanat (Wing)">🪽 ${esc(m.kanat)}</span>` : '';
+    const closetBadge = m.dolap && m.dolap !== 'genel' ? `<span class="badge closet" title="Dolap (Closet)">🗄️ ${esc(m.dolap)}</span>` : '';
     return `<div class="mem-item" style="border-left-color:${meta.color}" data-mem-id="${esc(m.id)}">
       <div class="mi-top">
-        <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+        <div class="mempalace-badge-row">
+          <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+          ${wingBadge}
+          ${closetBadge}
+        </div>
         <span class="mi-title">${esc(m.konu)}</span>
         <span class="imp" style="margin-left:auto">★ ${Number(m.importance).toFixed(0)}</span>${score}
       </div>
       <div class="mi-body">${esc((m.bilgi || '').slice(0, 220))}</div>
       <div class="mi-foot">
-        <span>${esc(ago(m.created_at))}</span>
+        <span title="${esc(fmtDateTime(m.created_at))}">${esc(ago(m.created_at))}</span>
         ${(m.tags || []).slice(0, 4).map(t => `<span class="tag">${esc(t)}</span>`).join('')}
       </div>
     </div>`;
@@ -917,9 +934,19 @@
     const meta = roomMeta(m.oda);
     $('#modal').innerHTML = `
       <div class="modal-head">
-        <div><h2>${esc(m.konu)}</h2>
-          <div class="muted small" style="margin-top:4px">${meta.icon} ${esc(meta.label)} · ${esc(fmtDateTime(m.created_at))}</div></div>
+        <div>
+          <h2>${esc(m.konu)}</h2>
+          <div class="muted small" style="margin-top:4px">📅 ${esc(fmtDateTime(m.created_at))} (${esc(ago(m.created_at))})</div>
+        </div>
         <span class="modal-close" onclick="closeModal()">✕</span>
+      </div>
+      <div class="mempalace-badge-row" style="margin: 10px 0 16px; padding: 10px 14px; background: color-mix(in srgb, var(--surface) 60%, transparent); border: 1px solid var(--border); border-radius: 8px;">
+        <span style="font-size: .75rem; color: var(--text-faint); margin-right: 4px;">ZİHİN SARAYI KONUMU:</span>
+        <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+        <span class="mempalace-sep">›</span>
+        <span class="badge wing">🪽 Kanat: ${esc(m.kanat || 'genel')}</span>
+        <span class="mempalace-sep">›</span>
+        <span class="badge closet">🗄️ Dolap: ${esc(m.dolap || 'genel')}</span>
       </div>
       <div class="meta-grid">
         <div class="mg"><label>Önem</label><b style="color:var(--amber)">★ ${Number(m.importance).toFixed(1)}</b></div>
@@ -933,7 +960,8 @@
         <div class="mem-list">${related.slice(0, 6).map(r => memItem(r)).join('')}</div>` : ''}
       <div style="display:flex;gap:10px;margin-top:22px">
         <button class="btn" onclick="navigate('graph')">🕸️ Grafikte gör</button>
-        <button class="btn" style="border-color:var(--red);color:var(--red)" onclick="archiveMemory('${esc(m.id)}')">🗄️ Arşivle</button>
+        <button class="btn" style="border-color:var(--amber);color:var(--amber)" onclick="archiveMemory('${esc(m.id)}')">🗄️ Arşivle</button>
+        <button class="btn" style="border-color:var(--red);color:var(--red)" onclick="deleteMemory('${esc(m.id)}')">🗑️ Kalıcı Sil</button>
       </div>`;
     $('#overlay').classList.remove('hidden');
     bindMemItems($('#modal'));
@@ -957,31 +985,136 @@
   /* ─────────────────────────── ADD MEMORY ─────────────────────────── */
   function openAddForm() {
     const roomOpts = ['otomatik', ...Object.keys(ROOM_META)].map(k =>
-      `<option value="${k === 'otomatik' ? '' : k}">${k === 'otomatik' ? 'Otomatik belirle' : ROOM_META[k].label}</option>`).join('');
+      `<option value="${k === 'otomatik' ? '' : k}">${k === 'otomatik' ? '⚡ Otomatik belirle (Ollama)' : ROOM_META[k].icon + ' ' + ROOM_META[k].label}</option>`).join('');
     $('#modal').innerHTML = `
-      <div class="modal-head"><div><h2>+ Yeni Anı Ekle</h2><div class="muted small" style="margin-top:4px">Ollama otomatik sınıflandırma ve varlık çıkarımı yapar</div></div>
-        <span class="modal-close" onclick="closeModal()">✕</span></div>
-      <div class="form-row"><label>Konu (başlık)</label><input class="field" id="fKonu" placeholder="Örn: NixOS flake yapılandırması" /></div>
-      <div class="form-row"><label>Bilgi (içerik)</label><textarea class="field" id="fBilgi" placeholder="Kaydedilecek bilginin tamamı…"></textarea></div>
-      <div class="grid cols-2">
-        <div class="form-row"><label>Oda</label><select class="field" id="fOda">${roomOpts}</select></div>
-        <div class="form-row"><label>Önem: <b id="fImpVal">7</b>/10</label>
-          <input type="range" id="fImp" min="1" max="10" value="7" style="width:100%" /></div>
+      <div class="modal-head">
+        <div>
+          <h2>+ Yeni Anı Ekle</h2>
+          <div class="muted small" style="margin-top:4px">Ollama ile otomatik sınıflandırma, semantik vektörleme ve varlık ilişkisi çıkarımı</div>
+        </div>
+        <span class="modal-close" onclick="closeModal()">✕</span>
       </div>
-      <div style="display:flex;gap:10px;margin-top:8px">
-        <button class="btn primary" id="fSave">💾 Kaydet</button>
+
+      <div class="form-row">
+        <label>Konu (Başlık)</label>
+        <input type="text" class="field" id="fKonu" placeholder="Örn: NixOS flake mimarisi veya Bluetooth eşleme sorunu" />
+      </div>
+
+      <div class="form-row">
+        <label>Bilgi (İçerik)</label>
+        <textarea class="field" id="fBilgi" placeholder="Kaydedilecek bilginin tamamı, komutlar, çözümler veya düşünceler…"></textarea>
+      </div>
+
+      <div class="grid cols-2">
+        <div class="form-row">
+          <label>Oda (Kategori)</label>
+          <select class="field" id="fOda">${roomOpts}</select>
+        </div>
+        <div class="form-row">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label style="margin:0">Önem Skoru</label>
+            <b id="fImpVal" style="color:var(--amber);font-family:var(--mono);">★ 7/10</b>
+          </div>
+          <input type="range" id="fImp" min="1" max="10" value="7" style="width:100%" />
+        </div>
+      </div>
+
+      <!-- GELİŞMİŞ ZİHİN SARAYI VE ZAMAN SEÇENEKLERİ -->
+      <div class="adv-panel" id="advPanel">
+        <div class="adv-header" id="advToggle">
+          <span>🏛️ Zihin Sarayı Konumu & Özel Zaman (Gelişmiş)</span>
+          <span class="adv-toggle-icon">▼</span>
+        </div>
+        <div class="adv-content" id="advContent">
+          <div class="grid cols-2" style="margin-bottom:12px;">
+            <div class="form-row">
+              <label>🪽 Kanat (Wing - Opsiyonel)</label>
+              <input type="text" class="field" id="fKanat" placeholder="Örn: Ağ ve Güvenlik, Frontend, Distro..." />
+            </div>
+            <div class="form-row">
+              <label>🗄️ Dolap (Closet - Opsiyonel)</label>
+              <input type="text" class="field" id="fDolap" placeholder="Örn: FastMCP, Flake, Hyprland..." />
+            </div>
+          </div>
+          <div class="form-row">
+            <label>📅 Özel Kayıt Zamanı (Geçmiş / Tarih Damgası)</label>
+            <div style="display:flex; gap:8px;">
+              <input type="datetime-local" class="field" id="fTarih" style="flex:1" />
+              <button type="button" class="btn ghost small" id="fResetDate" title="Şimdiki zamana sıfırla">Şimdi</button>
+            </div>
+            <small class="muted" style="margin-top:4px; display:block;">Boş bırakılırsa sistem şu anki anlık yerel zamanı kaydeder.</small>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-top:14px">
+        <button class="btn primary" id="fSave" style="flex:1;justify-content:center;">💾 Hafızaya İşle</button>
         <button class="btn ghost" onclick="closeModal()">İptal</button>
       </div>`;
+
     $('#overlay').classList.remove('hidden');
-    $('#fImp').oninput = e => $('#fImpVal').textContent = e.target.value;
+
+    // Gelişmiş akordeon toggle
+    const advPanel = $('#advPanel');
+    const advToggle = $('#advToggle');
+    if (advToggle && advPanel) {
+      advToggle.onclick = () => advPanel.classList.toggle('open');
+    }
+
+    // Şimdi butonu
+    const fTarih = $('#fTarih');
+    const fResetDate = $('#fResetDate');
+    if (fResetDate && fTarih) {
+      fResetDate.onclick = () => { fTarih.value = ''; toast('Tarih şimdiki zamana ayarlandı'); };
+    }
+
+    $('#fImp').oninput = e => $('#fImpVal').textContent = '★ ' + e.target.value + '/10';
+
     $('#fSave').onclick = async () => {
       const konu = $('#fKonu').value.trim(), bilgi = $('#fBilgi').value.trim();
-      if (!konu || !bilgi) { toast('Konu ve bilgi zorunlu.', 'err'); return; }
-      const body = { konu, bilgi, oda: $('#fOda').value || null, importance: Number($('#fImp').value), agent_id: 'user' };
-      $('#fSave').textContent = 'Kaydediliyor…'; $('#fSave').disabled = true;
-      const r = await api('/api/memory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (r) { toast(r.message || 'Anı kaydedildi.', 'ok'); closeModal(); state.loadedAt = 0; await loadCore(true); await loadHeader(); await router(); }
-      else { toast('Kaydetme başarısız — sunucu/Ollama kontrol et.', 'err'); $('#fSave').textContent = '💾 Kaydet'; $('#fSave').disabled = false; }
+      if (!konu || !bilgi) { toast('Konu ve bilgi alanları zorunludur.', 'err'); return; }
+
+      const tarih = $('#fTarih').value;
+      const isoTarih = tarih ? new Date(tarih).toISOString() : null;
+      const body = {
+        konu, bilgi,
+        oda: $('#fOda').value || null,
+        kanat: $('#fKanat').value.trim() || null,
+        dolap: $('#fDolap').value.trim() || null,
+        created_at: isoTarih,
+        importance: Number($('#fImp').value),
+        agent_id: 'user'
+      };
+
+      $('#fSave').textContent = 'Ollama işliyor…'; $('#fSave').disabled = true;
+      const r = await api('/api/memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      if (r && (r.status === 'created' || r.status === 'updated' || r.id)) {
+        toast(r.message || 'Anı başarıyla hafızaya işlendi.', 'ok');
+        closeModal();
+        state.loadedAt = 0;
+        await loadCore(true);
+        await loadHeader();
+        await router();
+
+        // Eğer kullanıcı özel geçmiş tarih girdiyse ve 30 günden eskiyse timelineDays'i tümü yap
+        if (isoTarih && daysOld(isoTarih) > 30) {
+          state.timelineDays = 3650;
+        }
+
+        // Eklenen anıyı doğrudan detay modalında göstererek kullanıcıya teyit et
+        if (r.id) {
+          setTimeout(() => openMemoryById(r.id), 250);
+        }
+      } else {
+        toast('Kaydetme başarısız — sunucu veya Ollama durumunu kontrol edin.', 'err');
+        $('#fSave').textContent = '💾 Hafızaya İşle';
+        $('#fSave').disabled = false;
+      }
     };
   }
 
@@ -1159,6 +1292,259 @@
       }
       requestAnimationFrame(loop);
     })();
+  }
+
+  /* ─────────────────────────── ARCHIVE & SETTINGS ─────────────────────────── */
+  async function unarchiveMemory(id) {
+    const r = await api('/api/memory/unarchive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memory_id: id }) });
+    if (r && r.status === 'unarchived') { toast('Arşivden çıkarıldı.', 'ok'); closeModal(); state.loadedAt = 0; await loadCore(true); await router(); }
+    else toast('Hata oluştu.', 'err');
+  }
+  window.unarchiveMemory = unarchiveMemory;
+
+  async function deleteMemory(id) {
+    if (!confirm('Bu anıyı KALICI OLARAK silmek istediğine emin misin? Bu işlem geri alınamaz!')) return;
+    const r = await api(`/api/memory/${id}`, { method: 'DELETE' });
+    if (r && r.status === 'deleted') { toast('Kalıcı olarak silindi.', 'ok'); closeModal(); state.loadedAt = 0; await loadCore(true); await router(); }
+    else toast('Silinemedi.', 'err');
+  }
+  window.deleteMemory = deleteMemory;
+
+  async function viewArchive(c) {
+    c.innerHTML = loadingHTML();
+    const arc = await api('/api/memory/archived') || [];
+    if (!arc.length) { c.innerHTML = viewShell('Arşiv', 'Gizlenmiş anılar', '', emptyHTML('Arşivde hiç anı yok.', '📦')); return; }
+    
+    const list = arc.map(m => {
+      const meta = roomMeta(m.oda);
+      const wingBadge = m.kanat && m.kanat !== 'genel' ? `<span class="badge wing">🪽 ${esc(m.kanat)}</span>` : '';
+      const closetBadge = m.dolap && m.dolap !== 'genel' ? `<span class="badge closet">🗄️ ${esc(m.dolap)}</span>` : '';
+      return `
+        <div class="mem-item" style="border-left-color:var(--text-dim)">
+          <div class="mi-top">
+            <div class="mempalace-badge-row">
+              <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+              ${wingBadge}
+              ${closetBadge}
+            </div>
+            <span class="mi-title" style="color:var(--text-dim)">${esc(m.konu)}</span>
+            <span class="imp" style="margin-left:auto">★ ${Number(m.importance).toFixed(0)}</span>
+          </div>
+          <div class="mi-body">${esc((m.content || '').slice(0, 180))}...</div>
+          <div class="mi-foot">
+            <span>📅 ${esc(fmtDateTime(m.created_at))}</span>
+            <div style="margin-left:auto; display:flex; gap:8px;">
+              <button class="btn ghost small" onclick="unarchiveMemory('${esc(m.id)}')">↩ Geri Al</button>
+              <button class="btn ghost small" style="color:var(--red);border-color:var(--red)" onclick="deleteMemory('${esc(m.id)}')">🗑️ Kalıcı Sil</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    c.innerHTML = viewShell('Arşiv', `${arc.length} gizlenmiş anı`, '', `<div class="mem-list">${list}</div>`);
+  }
+
+  /* ─────────────────────────── VIEW: SETTINGS ─────────────────────────── */
+  async function viewSettings(c) {
+    if (state.graphError) { c.innerHTML = errorHTML(); return; }
+    renderRoomNav();
+    c.innerHTML = viewShell('Ayarlar', 'Zihin Sarayı Yapılandırması ve Ollama Modelleri', '') +
+      '<div class="loading-full"><div class="spinner"></div><div class="muted small" style="margin-top:10px">Ollama modelleri ve sistem yapılandırması alınıyor…</div></div>';
+
+    const res = await api('/api/settings');
+    if (!res || !res.config) {
+      c.innerHTML = viewShell('Ayarlar', 'Zihin Sarayı Yapılandırması', '') +
+        '<div class="card" style="color:var(--red);margin-top:14px;">Sunucu ayarları alınamadı. Lütfen sunucunun çalıştığından emin olun.</div>';
+      return;
+    }
+
+    const cfg = res.config;
+    const avail = res.available_models || [];
+
+    // Model dropdown seçenekleri üretici
+    const modelOpts = (selected) => {
+      let html = avail.map(m => {
+        const isSel = m.name === selected ? 'selected' : '';
+        const sizeGb = (m.size / (1024 * 1024 * 1024)).toFixed(1);
+        const tag = m.quantization || m.parameter_size || '';
+        return `<option value="${esc(m.name)}" ${isSel}>${esc(m.name)} (${sizeGb} GB${tag ? ' · ' + esc(tag) : ''})</option>`;
+      }).join('');
+      if (selected && !avail.some(m => m.name === selected)) {
+        html = `<option value="${esc(selected)}" selected>${esc(selected)} (Özel / Harici)</option>` + html;
+      }
+      return html;
+    };
+
+    const initialDecay = Number(cfg.decay_factor) || 0.99;
+
+    // Canlı simülasyon hesaplayıcı
+    const calcDecaySim = (factor) => {
+      const d30 = (10 * Math.pow(factor, 30)).toFixed(2);
+      const d90 = (10 * Math.pow(factor, 90)).toFixed(2);
+      return `Örnek (10 puanlık anı): 30 gün sonra <b>${d30}</b> puana, 90 gün sonra <b>${d90}</b> puana düşer.`;
+    };
+
+    c.innerHTML = viewShell('Ayarlar', 'Zihin Sarayı Yapılandırması ve LLM Parametreleri', '') + `
+      <div class="grid cols-2" style="margin-bottom:20px; align-items:start;">
+        <!-- LLM MODELLERİ -->
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <h3 style="margin:0">🤖 Yapay Zeka (Ollama) Modelleri</h3>
+            <span class="badge" style="border-color:${avail.length ? 'var(--cyan)' : 'var(--red)'};color:${avail.length ? 'var(--cyan)' : 'var(--red)'}">
+              ${avail.length ? `● ${avail.length} model kurulu` : '○ Ollama kapalı'}
+            </span>
+          </div>
+
+          <div class="form-row">
+            <label>⚡ Hızlı Model (Oda Sınıflandırma, Tag Üretimi)</label>
+            <div style="display:flex;gap:8px;">
+              <select class="field" id="cfgFastModel" style="flex:1;">
+                ${modelOpts(cfg.fast_model)}
+              </select>
+              <button class="btn ghost small" id="btnTestFast" title="Modeli Test Et">⚡ Test</button>
+            </div>
+            <div id="testResFast" style="margin-top:4px;"></div>
+          </div>
+
+          <div class="form-row" style="margin-top:14px;">
+            <label>🧠 Zeki Model (Upsert Kararı, Varlık/İlişki Çıkarımı)</label>
+            <div style="display:flex;gap:8px;">
+              <select class="field" id="cfgSmartModel" style="flex:1;">
+                ${modelOpts(cfg.smart_model)}
+              </select>
+              <button class="btn ghost small" id="btnTestSmart" title="Modeli Test Et">⚡ Test</button>
+            </div>
+            <div id="testResSmart" style="margin-top:4px;"></div>
+          </div>
+
+          <div class="form-row" style="margin-top:14px;">
+            <label>💬 Konuşma / Özet Modeli (Multilingual)</label>
+            <div style="display:flex;gap:8px;">
+              <select class="field" id="cfgConvModel" style="flex:1;">
+                ${modelOpts(cfg.conv_model)}
+              </select>
+              <button class="btn ghost small" id="btnTestConv" title="Modeli Test Et">⚡ Test</button>
+            </div>
+            <div id="testResConv" style="margin-top:4px;"></div>
+          </div>
+
+          <div class="form-row" style="margin-top:14px;">
+            <label>🌐 Ollama API Adresi</label>
+            <input type="text" class="field" id="cfgOllamaBase" value="${esc(cfg.ollama_base || 'http://localhost:11434')}" />
+          </div>
+        </div>
+
+        <!-- HAFIZA & EBBINGHAUS AYARLARI -->
+        <div class="card">
+          <h3 style="margin-bottom:14px">📉 Ebbinghaus Unutma Eğrisi & Hafıza Politikası</h3>
+
+          <div class="form-row">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <label style="margin:0">Decay Katsayısı (Günlük Korunum)</label>
+              <b id="lblDecayVal" style="color:var(--violet);font-family:var(--mono);font-size:.9rem">${initialDecay.toFixed(3)}</b>
+            </div>
+            <input type="range" id="rngDecay" min="0.800" max="1.000" step="0.005" value="${initialDecay}" style="width:100%" />
+            <div id="decaySimBox" class="muted small" style="margin-top:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border);">
+              ${calcDecaySim(initialDecay)}
+            </div>
+          </div>
+
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+            <h4 style="margin-bottom:10px;font-size:.85rem;color:var(--text)">🛡️ Akıllı Çakışma ve Arşivleme Politikası</h4>
+            <label class="switch">
+              <input type="checkbox" id="chkAutoArchive" ${cfg.auto_archive_conflicts !== false ? 'checked' : ''} />
+              <span class="track"></span>
+              <span>Çakışan eski anıları otomatik arşivle</span>
+            </label>
+            <p class="muted small" style="margin-top:8px">
+              Yeni bir anı eskisini geçersiz kıldığında veya çeliştiğinde, eski anı doğrudan silinmez; Arşiv bölümüne aktarılır.
+            </p>
+          </div>
+
+          <div style="margin-top:24px;display:flex;gap:12px;">
+            <button class="btn primary" id="btnSaveSettings" style="flex:1;justify-content:center;">
+              💾 Ayarları Kaydet ve Uygula
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Event Dinleyicileri: Decay Slider
+    const rng = $('#rngDecay', c);
+    const lbl = $('#lblDecayVal', c);
+    const sim = $('#decaySimBox', c);
+    if (rng) {
+      rng.oninput = (e) => {
+        const val = Number(e.target.value);
+        lbl.textContent = val.toFixed(3);
+        sim.innerHTML = calcDecaySim(val);
+      };
+    }
+
+    // Model test fonksiyonu
+    const bindTest = (btnId, selId, resId) => {
+      const btn = $(btnId, c), sel = $(selId, c), res = $(resId, c);
+      if (!btn || !sel || !res) return;
+      btn.onclick = async () => {
+        const model = sel.value;
+        if (!model) { toast('Model seçilmedi', 'err'); return; }
+        btn.disabled = true;
+        btn.textContent = '⏳';
+        res.innerHTML = '<span class="muted small">Ollama test ediliyor…</span>';
+        const r = await api('/api/settings/test-model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model })
+        });
+        btn.disabled = false;
+        btn.textContent = '⚡ Test';
+        if (r && r.ok) {
+          res.innerHTML = `<span class="badge" style="border-color:var(--green);color:var(--green);font-size:.7rem">✓ ${r.duration_ms}ms · Model hazır</span>`;
+        } else {
+          res.innerHTML = `<span class="badge" style="border-color:var(--red);color:var(--red);font-size:.7rem">✗ Hata: ${esc((r && r.error) || 'Bağlantı hatası')}</span>`;
+        }
+      };
+    };
+
+    bindTest('#btnTestFast', '#cfgFastModel', '#testResFast');
+    bindTest('#btnTestSmart', '#cfgSmartModel', '#testResSmart');
+    bindTest('#btnTestConv', '#cfgConvModel', '#testResConv');
+
+    // Kaydet butonu
+    const btnSave = $('#btnSaveSettings', c);
+    if (btnSave) {
+      btnSave.onclick = async () => {
+        const payload = {
+          fast_model: $('#cfgFastModel', c).value,
+          smart_model: $('#cfgSmartModel', c).value,
+          conv_model: $('#cfgConvModel', c).value,
+          decay_factor: Number($('#rngDecay', c).value),
+          auto_archive_conflicts: $('#chkAutoArchive', c).checked,
+          ollama_base: $('#cfgOllamaBase', c).value.trim()
+        };
+
+        btnSave.disabled = true;
+        btnSave.textContent = 'Kaydediliyor…';
+        const upd = await api('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        btnSave.disabled = false;
+        btnSave.textContent = '💾 Ayarları Kaydet ve Uygula';
+
+        if (upd && upd.status === 'ok') {
+          DECAY = payload.decay_factor;
+          state.config = upd.config;
+          toast('✅ Ayarlar başarıyla kaydedildi ve tüm sistemde uygulandı.', 'ok');
+          loadHeader();
+        } else {
+          toast('Ayarlar kaydedilemedi.', 'err');
+        }
+      };
+    }
   }
 
   /* ─────────────────────────── THEME ─────────────────────────── */

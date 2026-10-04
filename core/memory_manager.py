@@ -186,6 +186,8 @@ class MemoryManager:
                 konu=meta.get("konu", ""),
                 bilgi=data["documents"][i],
                 oda=meta.get("oda", "genel"),
+                kanat=meta.get("kanat", "genel"),
+                dolap=meta.get("dolap", "genel"),
                 agent_id=meta.get("agent_id", "user"),
                 importance=float(meta.get("importance", 7.0)),
                 access_count=int(meta.get("access_count", 0)),
@@ -289,6 +291,8 @@ class MemoryManager:
                 "konu": meta.get("konu", ""),
                 "content": results["documents"][0][i],
                 "oda": meta.get("oda", "genel"),
+                "kanat": meta.get("kanat", "genel"),
+                "dolap": meta.get("dolap", "genel"),
                 "score": round(score, 3),
                 "bm25": round(bm25_scores.get(doc_id, 0.0), 3),
                 "importance": float(meta.get("importance", 7.0)),
@@ -298,12 +302,15 @@ class MemoryManager:
             })
 
         # Hibrit sıralama: cosine (%50) + BM25 (%30) + importance decay (%20)
+        from .config import get_config
+        decay_factor = float(get_config().get("decay_factor", 0.99))
+
         def _decay_score(item: dict) -> float:
             try:
                 days = (datetime.now() - datetime.fromisoformat(item["created_at"])).days
             except Exception:
                 days = 0
-            decayed = item["importance"] * (0.99 ** days) + (item["access_count"] * 0.5)
+            decayed = item["importance"] * (decay_factor ** days) + (item["access_count"] * 0.5)
             return min(10.0, decayed)
 
         items.sort(
@@ -335,7 +342,8 @@ class MemoryManager:
         kanat: str = "genel",
         dolap: str = "genel",
         agent_id: str = "user",
-        importance: float = 7.0
+        importance: float = 7.0,
+        created_at: str | None = None
     ) -> dict:
         """
         Akıllı hafıza ekleme:
@@ -363,10 +371,13 @@ class MemoryManager:
         if ollama_ok and similar:
             decision = await decide_upsert(konu, bilgi, similar)
             log.info(f"Upsert kararı: {decision['action']} — {decision['reason']}")
-            # Çakışan anıları otomatik arşivle
-            for cid in decision.get("conflict_ids", []):
-                if await asyncio.to_thread(self.archive_memory, cid):
-                    log.info(f"Çakışan anı arşivlendi: {cid}")
+            # Çakışan anıları otomatik arşivle (config izin veriyorsa)
+            from .config import get_config
+            cfg = get_config()
+            if cfg.get("auto_archive_conflicts", True):
+                for cid in decision.get("conflict_ids", []):
+                    if await asyncio.to_thread(self.archive_memory, cid):
+                        log.info(f"Çakışan anı arşivlendi: {cid}")
 
         # 4. Tag üretimi
         tags = []
@@ -388,7 +399,7 @@ class MemoryManager:
         if decision["action"] == "skip":
             return {"status": "skipped", "reason": decision["reason"], "oda": oda}
 
-        now = datetime.now().isoformat()
+        now = created_at if created_at else datetime.now().isoformat()
         meta = {
             "konu": konu,
             "oda": oda,
@@ -398,7 +409,7 @@ class MemoryManager:
             "importance": str(importance),
             "access_count": "0",
             "created_at": now,
-            "updated_at": now,
+            "updated_at": datetime.now().isoformat(),
             "tags": json.dumps(tags, ensure_ascii=False),
             "archived": "false"
         }
@@ -409,7 +420,7 @@ class MemoryManager:
             try:
                 existing = await asyncio.to_thread(self.collection.get, ids=[existing_id], include=["metadatas"])
                 existing_meta = existing["metadatas"][0] if existing["metadatas"] else {}
-                meta["created_at"] = existing_meta.get("created_at", "1970-01-01T00:00:00+00:00")
+                meta["created_at"] = created_at if created_at else existing_meta.get("created_at", "1970-01-01T00:00:00+00:00")
                 meta["access_count"] = existing_meta.get("access_count", "0")
                 meta["importance"] = str(max(
                     float(existing_meta.get("importance", 7.0)),
@@ -432,6 +443,9 @@ class MemoryManager:
                 "status": "updated",
                 "id": existing_id,
                 "oda": oda,
+                "kanat": kanat,
+                "dolap": dolap,
+                "created_at": meta["created_at"],
                 "tags": tags,
                 "relations": len(relations),
                 "message": f"✅ [{oda.upper()}] '{konu}' güncellendi"
@@ -454,6 +468,9 @@ class MemoryManager:
                 "status": "created",
                 "id": new_id,
                 "oda": oda,
+                "kanat": kanat,
+                "dolap": dolap,
+                "created_at": now,
                 "tags": tags,
                 "relations": len(relations),
                 "message": f"✅ [{oda.upper()}] '{konu}' hafızaya işlendi"
@@ -498,7 +515,7 @@ class MemoryManager:
         memories = self.get_all_memories()
 
         # ChromaDB düğümleri
-        nodes = [{"id": m.id, "label": m.konu, "oda": m.oda, "content": m.bilgi,
+        nodes = [{"id": m.id, "label": m.konu, "oda": m.oda, "kanat": m.kanat, "dolap": m.dolap, "content": m.bilgi,
                   "importance": m.importance, "tags": m.tags,
                   "created_at": m.created_at, "type": "memory"} for m in memories]
 
@@ -672,6 +689,62 @@ class MemoryManager:
         except Exception as e:
             log.error(f"Arşivleme hatası: {e}")
             return False
+
+    def unarchive_memory(self, memory_id: str) -> bool:
+        """Arşivlenmiş anıyı geri al (unarchive)."""
+        try:
+            data = self.collection.get(ids=[memory_id], include=["metadatas"])
+            if not data["ids"]:
+                return False
+            meta = data["metadatas"][0]
+            meta["archived"] = "false"
+            self.collection.update(ids=[memory_id], metadatas=[meta])
+            return True
+        except Exception as e:
+            log.error(f"Arşivden çıkarma hatası: {e}")
+            return False
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """Bir anıyı kalıcı olarak SİL."""
+        try:
+            self.collection.delete(ids=[memory_id])
+            try:
+                conn = sqlite3.connect(GRAPH_DB_PATH)
+                conn.execute("DELETE FROM memories_fts WHERE memory_id=?", (memory_id,))
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            log.error(f"Silme hatası: {e}")
+            return False
+
+    def get_archived_memories(self) -> list[Memory]:
+        """Sadece arşivlenmiş anıları getir."""
+        try:
+            data = self.collection.get(where={"archived": "true"}, include=["documents", "metadatas"])
+        except Exception:
+            return []
+        memories = []
+        for i, doc_id in enumerate(data.get("ids", [])):
+            meta = data["metadatas"][i]
+            memories.append(Memory(
+                id=doc_id,
+                konu=meta.get("konu", ""),
+                bilgi=data["documents"][i],
+                oda=meta.get("oda", "genel"),
+                kanat=meta.get("kanat", "genel"),
+                dolap=meta.get("dolap", "genel"),
+                agent_id=meta.get("agent_id", "user"),
+                importance=float(meta.get("importance", 7.0)),
+                access_count=int(meta.get("access_count", 0)),
+                created_at=meta.get("created_at", "1970-01-01T00:00:00+00:00"),
+                updated_at=meta.get("updated_at", "1970-01-01T00:00:00+00:00"),
+                tags=json.loads(meta.get("tags", "[]")),
+                archived=True
+            ))
+        return memories
 
     def get_user_profile(self) -> dict:
         """Tüm anılardan kullanıcı profili çıkar."""

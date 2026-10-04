@@ -1,0 +1,8 @@
+{
+  "fast_model": "qwen2.5-coder:7b",
+  "smart_model": "huihui_ai/gemma-4-abliterated:26b",
+  "conv_model": "huihui_ai/gemma-4-abliterated:12b-qat",
+  "decay_factor": 0.99,
+  "ollama_base": "http://localhost:11434",
+  "auto_archive_conflicts": true
+}

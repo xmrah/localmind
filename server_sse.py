@@ -53,11 +53,25 @@ class AddMemoryRequest(BaseModel):
     konu: str
     bilgi: str
     oda: str | None = None
+    kanat: str | None = None
+    dolap: str | None = None
+    created_at: str | None = None
     agent_id: str = "user"
     importance: float = 7.0
 
 class ArchiveRequest(BaseModel):
     memory_id: str
+
+class SettingsUpdateRequest(BaseModel):
+    fast_model: str | None = None
+    smart_model: str | None = None
+    conv_model: str | None = None
+    decay_factor: float | None = None
+    auto_archive_conflicts: bool | None = None
+    ollama_base: str | None = None
+
+class TestModelRequest(BaseModel):
+    model: str
 
 # ─────────────────────────────────────────────────────────
 # API ROTALARI
@@ -101,7 +115,32 @@ async def room_detail(oda: str):
     memories = manager.get_room_memories(oda)
     return [
         {"id": m.id, "konu": m.konu, "content": m.bilgi, "oda": m.oda,
+         "kanat": m.kanat, "dolap": m.dolap,
          "importance": m.importance, "tags": m.tags, "created_at": m.created_at}
+        for m in memories
+    ]
+
+@app.get("/api/memories")
+async def all_memories(include_archived: bool = False):
+    """Tüm anıları kanat, dolap ve tüm metadata ile döndürür."""
+    if not manager:
+        raise HTTPException(503)
+    memories = manager.get_all_memories(include_archived=include_archived)
+    return [
+        {
+            "id": m.id,
+            "konu": m.konu,
+            "content": m.bilgi,
+            "oda": m.oda,
+            "kanat": m.kanat,
+            "dolap": m.dolap,
+            "importance": m.importance,
+            "access_count": m.access_count,
+            "tags": m.tags,
+            "created_at": m.created_at,
+            "updated_at": m.updated_at,
+            "archived": m.archived
+        }
         for m in memories
     ]
 
@@ -126,6 +165,9 @@ async def add_memory(req: AddMemoryRequest):
         konu=req.konu,
         bilgi=req.bilgi,
         oda=req.oda,
+        kanat=req.kanat or "genel",
+        dolap=req.dolap or "genel",
+        created_at=req.created_at,
         agent_id=req.agent_id,
         importance=req.importance
     )
@@ -139,6 +181,60 @@ async def archive_memory(req: ArchiveRequest):
     if not ok:
         raise HTTPException(404, "Anı bulunamadı")
     return {"status": "archived"}
+
+@app.get("/api/memory/archived")
+async def get_archived():
+    if not manager:
+        raise HTTPException(503)
+    memories = manager.get_archived_memories()
+    return [
+        {"id": m.id, "konu": m.konu, "content": m.bilgi, "oda": m.oda,
+         "kanat": m.kanat, "dolap": m.dolap,
+         "importance": m.importance, "tags": m.tags, "created_at": m.created_at}
+        for m in memories
+    ]
+
+@app.post("/api/memory/unarchive")
+async def unarchive_memory(req: ArchiveRequest):
+    if not manager:
+        raise HTTPException(503)
+    ok = manager.unarchive_memory(req.memory_id)
+    if not ok:
+        raise HTTPException(404, "Anı bulunamadı")
+    return {"status": "unarchived"}
+
+@app.get("/api/settings")
+async def get_settings():
+    from core.config import get_config
+    from core.intelligence import get_ollama_models
+    cfg = get_config()
+    models = await get_ollama_models()
+    return {
+        "config": cfg,
+        "available_models": models
+    }
+
+@app.post("/api/settings")
+async def update_settings(req: SettingsUpdateRequest):
+    from core.config import save_config
+    data = {k: v for k, v in req.model_dump().items() if v is not None}
+    new_cfg = save_config(data)
+    return {"status": "ok", "config": new_cfg, "message": "Ayarlar başarıyla kaydedildi ve uygulandı"}
+
+@app.post("/api/settings/test-model")
+async def test_model(req: TestModelRequest):
+    from core.intelligence import test_ollama_model
+    res = await test_ollama_model(req.model)
+    return res
+
+@app.delete("/api/memory/{memory_id}")
+async def delete_memory(memory_id: str):
+    if not manager:
+        raise HTTPException(503)
+    ok = manager.delete_memory(memory_id)
+    if not ok:
+        raise HTTPException(404, "Anı bulunamadı veya silinemedi")
+    return {"status": "deleted"}
 
 @app.get("/api/profile")
 async def profile():

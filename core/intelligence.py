@@ -1,33 +1,46 @@
 """
 Localmind v2 — Intelligence Layer
 Ollama LLM ile akıllı karar alma: sınıflandırma, entity çıkarımı, upsert kararı.
+Model ve bağlantı ayarları core/config.py üzerinden dinamik yönetilir.
 """
 import logging
+import time
 
 import httpx
 
+from .config import get_config
+
 log = logging.getLogger("localmind.intelligence")
 
-OLLAMA_BASE = "http://localhost:11434"
 
-# Hız için küçük model, kalite için büyük model
-FAST_MODEL  = "qwen2.5-coder:7b-instruct-q6_K"   # Sınıflandırma, upsert kararı
-SMART_MODEL = "gemma4:26b"                         # Entity çıkarımı — 26B MoE'nin derin anlam gücü
-CONV_MODEL  = "local/qwen3-14b:latest"             # Konuşma özetleme — Türkçe multilingual
+def get_models_config():
+    """Güncel config'den model isimlerini ve base URL'i al."""
+    cfg = get_config()
+    return {
+        "fast": cfg.get("fast_model", "qwen2.5-coder:7b"),
+        "smart": cfg.get("smart_model", "huihui_ai/gemma-4-abliterated:26b"),
+        "conv": cfg.get("conv_model", "huihui_ai/Qwen3.6-abliterated:27b"),
+        "base_url": cfg.get("ollama_base", "http://localhost:11434")
+    }
 
 
-async def _ollama_generate(prompt: str, model: str = FAST_MODEL) -> str:
+async def _ollama_generate(prompt: str, model_type: str = "fast", custom_model: str | None = None) -> str:
     """Ollama'ya istek gönder, saf metin döndür."""
+    cfg = get_models_config()
+    model = custom_model or cfg.get(model_type) or cfg["fast"]
+    base_url = cfg["base_url"]
+
     try:
-        if model == SMART_MODEL:
+        if model_type == "smart":
             timeout = 120.0
-        elif model == CONV_MODEL:
+        elif model_type == "conv":
             timeout = 90.0
         else:
             timeout = 30.0
+
         async with httpx.AsyncClient(timeout=timeout) as client:
             res = await client.post(
-                f"{OLLAMA_BASE}/api/generate",
+                f"{base_url}/api/generate",
                 json={"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}}
             )
             res.raise_for_status()
@@ -35,6 +48,48 @@ async def _ollama_generate(prompt: str, model: str = FAST_MODEL) -> str:
     except Exception as e:
         log.warning(f"Ollama bağlantı hatası ({model}): {e}")
         return ""
+
+
+async def get_ollama_models() -> list[dict]:
+    """Ollama'da kurulu modellerin listesini döndür."""
+    cfg = get_models_config()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(f"{cfg['base_url']}/api/tags")
+            if res.status_code == 200:
+                data = res.json()
+                return [
+                    {
+                        "name": m.get("name"),
+                        "size": m.get("size", 0),
+                        "parameter_size": m.get("details", {}).get("parameter_size", ""),
+                        "quantization": m.get("details", {}).get("quantization_level", "")
+                    }
+                    for m in data.get("models", [])
+                ]
+    except Exception as e:
+        log.warning(f"Ollama modelleri listelenemedi: {e}")
+    return []
+
+
+async def test_ollama_model(model_name: str) -> dict:
+    """Belirli bir modeli test et ve yanıt süresi/durumu döndür."""
+    cfg = get_models_config()
+    start_time = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(
+                f"{cfg['base_url']}/api/generate",
+                json={"model": model_name, "prompt": "1+1 sonucu sadece rakam olarak nedir?", "stream": False}
+            )
+            duration_ms = int((time.time() - start_time) * 1000)
+            if res.status_code == 200:
+                resp_text = res.json().get("response", "").strip()
+                return {"ok": True, "duration_ms": duration_ms, "response": resp_text, "model": model_name}
+            return {"ok": False, "error": f"HTTP {res.status_code}", "duration_ms": duration_ms, "model": model_name}
+    except Exception as e:
+        duration_ms = int((time.time() - start_time) * 1000)
+        return {"ok": False, "error": str(e), "duration_ms": duration_ms, "model": model_name}
 
 
 async def classify_room(konu: str, bilgi: str) -> str:
@@ -57,7 +112,7 @@ Bilgi: {bilgi[:200]}
 
 Sadece kategori adını yaz, başka hiçbir şey yazma:"""
 
-    result = await _ollama_generate(prompt, FAST_MODEL)
+    result = await _ollama_generate(prompt, model_type="fast")
     result = result.lower().strip().split()[0] if result else ""
 
     # Geçerli bir kategori mi?
@@ -112,7 +167,7 @@ Format (sadece bu iki satırı yaz):
 KARAR: update|create|skip [güncelliyorsa: ID:...]
 ÇAKIŞAN: 1,2 | hiçbiri"""
 
-    result = await _ollama_generate(prompt, FAST_MODEL)
+    result = await _ollama_generate(prompt, model_type="fast")
     action = "create"
     existing_id = None
     conflict_ids = []
@@ -176,7 +231,7 @@ Konuşma:
 
 Çıkarılan bilgiler:"""
 
-    result = await _ollama_generate(prompt, CONV_MODEL)
+    result = await _ollama_generate(prompt, model_type="conv")
     facts = []
     current: dict = {}
 
@@ -227,7 +282,7 @@ NixOS | KURULU_OLDUĞU | AMD Ryzen 5 7500F
 
 Sadece kesin ilişkileri yaz, tahmin etme. Eğer ilişki yoksa boş bırak:"""
 
-    result = await _ollama_generate(prompt, SMART_MODEL)
+    result = await _ollama_generate(prompt, model_type="smart")
     relations = []
 
     for line in result.strip().split("\n"):
@@ -257,7 +312,7 @@ Bilgi: {bilgi[:200]}
 
 Sadece etiketleri virgülle ayırarak yaz:"""
 
-    result = await _ollama_generate(prompt, FAST_MODEL)
+    result = await _ollama_generate(prompt, model_type="fast")
     if not result:
         return []
     return [t.strip().lower() for t in result.split(",") if t.strip()][:5]
@@ -265,9 +320,10 @@ Sadece etiketleri virgülle ayırarak yaz:"""
 
 async def is_ollama_available() -> bool:
     """Ollama servisinin çalışıp çalışmadığını kontrol et."""
+    cfg = get_models_config()
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            res = await client.get(f"{OLLAMA_BASE}/api/tags")
+            res = await client.get(f"{cfg['base_url']}/api/tags")
             return res.status_code == 200
     except Exception:
         return False

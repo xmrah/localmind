@@ -27,12 +27,15 @@ class Memory(BaseModel):
     def decay_score(self) -> float:
         """Zaman geçtikçe önem skoru düşer, ama erişim artırır."""
         from datetime import datetime
+        from .config import get_config
+        cfg = get_config()
+        decay = float(cfg.get("decay_factor", 0.99))
         now = datetime.now().astimezone()
         created = datetime.fromisoformat(self.created_at)
         if created.tzinfo is None:
             created = created.astimezone() # Fallback for old naive records
         days = (now - created).days
-        decayed = self.importance * (0.99 ** days) + (self.access_count * 0.5)
+        decayed = self.importance * (decay ** days) + (self.access_count * 0.5)
         return min(10.0, decayed)
 
 
