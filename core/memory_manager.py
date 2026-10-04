@@ -480,7 +480,7 @@ class MemoryManager:
         conn.close()
 
     def get_graph_data(self) -> dict:
-        """D3.js için tam grafik verisi (ChromaDB + SQLite entity bağları)."""
+        """D3.js için tam grafik verisi (ChromaDB vektör benzerlikleri + SQLite entity bağları)."""
         memories = self.get_all_memories()
 
         # ChromaDB düğümleri
@@ -488,30 +488,65 @@ class MemoryManager:
                   "importance": m.importance, "tags": m.tags,
                   "created_at": m.created_at, "type": "memory"} for m in memories]
 
-        # Vektör benzerlik bağları
+        # Vektör benzerlik bağları (Tüm aktif anılar için precomputed embedding matrisi ile)
         links = []
         if len(memories) > 1:
             try:
-                results = self.collection.query(
-                    query_texts=[m.bilgi for m in memories[:20]],
-                    n_results=min(4, len(memories)),
-                    include=["distances"]
+                raw = self.collection.get(
+                    where={"archived": "false"},
+                    include=["embeddings"]
                 )
-                seen = set()
-                for i, query_ids in enumerate(results["ids"]):
-                    src_id = memories[i].id
-                    for j, tgt_id in enumerate(query_ids):
-                        if tgt_id == src_id:
+                raw_ids = raw.get("ids", [])
+                raw_embs = raw.get("embeddings")
+
+                if raw_embs is not None and len(raw_embs) > 1:
+                    import numpy as np
+                    embs = np.array(raw_embs, dtype=np.float32)
+                    norms = np.linalg.norm(embs, axis=1, keepdims=True)
+                    norms[norms == 0] = 1.0
+                    norm_embs = embs / norms
+                    sim_matrix = np.dot(norm_embs, norm_embs.T)
+                    np.fill_diagonal(sim_matrix, 0)
+
+                    seen = set()
+                    memory_id_set = {m.id for m in memories}
+
+                    for i, src_id in enumerate(raw_ids):
+                        if src_id not in memory_id_set:
                             continue
-                        pair = tuple(sorted([src_id, tgt_id]))
-                        if pair in seen:
-                            continue
-                        seen.add(pair)
-                        dist = results["distances"][i][j]
-                        sim = 1.0 - dist
-                        if sim > 0.35:
-                            links.append({"source": src_id, "target": tgt_id,
-                                          "value": round(sim, 2), "type": "semantic"})
+                        top_indices = np.argsort(sim_matrix[i])[-3:]
+
+                        # En iyi 1. komşu (>= 0.42)
+                        best_j = top_indices[-1]
+                        sim_best = float(sim_matrix[i, best_j])
+                        if sim_best >= 0.42:
+                            tgt_id = raw_ids[best_j]
+                            if tgt_id in memory_id_set and tgt_id != src_id:
+                                pair = tuple(sorted([src_id, tgt_id]))
+                                if pair not in seen:
+                                    seen.add(pair)
+                                    links.append({
+                                        "source": src_id,
+                                        "target": tgt_id,
+                                        "value": round(sim_best, 2),
+                                        "type": "semantic"
+                                    })
+
+                        # 2. ve 3. komşular (>= 0.52)
+                        for j in top_indices[:-1]:
+                            sim = float(sim_matrix[i, j])
+                            if sim >= 0.52:
+                                tgt_id = raw_ids[j]
+                                if tgt_id in memory_id_set and tgt_id != src_id:
+                                    pair = tuple(sorted([src_id, tgt_id]))
+                                    if pair not in seen:
+                                        seen.add(pair)
+                                        links.append({
+                                            "source": src_id,
+                                            "target": tgt_id,
+                                            "value": round(sim, 2),
+                                            "type": "semantic"
+                                        })
             except Exception as e:
                 log.warning(f"Graph link hesaplama hatası: {e}")
 
@@ -519,31 +554,54 @@ class MemoryManager:
         try:
             conn = sqlite3.connect(GRAPH_DB_PATH)
             entity_rels = conn.execute(
-                "SELECT source_name, relation, target_name, memory_id FROM relations LIMIT 100"
+                "SELECT source_name, relation, target_name, memory_id FROM relations LIMIT 150"
             ).fetchall()
             conn.close()
 
-            # Entity düğümlerini ekle (memory ID'si olmayanlar için)
             memory_ids = {m.id for m in memories}
             entity_nodes = {}
+            bad_entities = {"yok", "-", "--", "none", "null", "6 sayfa"}
+
             for src, rel, tgt, mem_id in entity_rels:
-                for name in [src, tgt]:
-                    if name not in entity_nodes:
-                        entity_nodes[name] = {
-                            "id": f"entity_{name}",
+                s = src.strip()
+                t = tgt.strip()
+                r = rel.strip()
+                if not s or not t or len(s) < 2 or len(t) < 2:
+                    continue
+                if s.lower() in bad_entities or t.lower() in bad_entities:
+                    continue
+
+                for name in [s, t]:
+                    eid = f"entity_{name}"
+                    if eid not in entity_nodes:
+                        entity_nodes[eid] = {
+                            "id": eid,
                             "label": name,
                             "oda": "entity",
                             "content": name,
                             "importance": 5.0,
                             "type": "entity"
                         }
+
+                # Entity -> Entity ilişkisi
                 links.append({
-                    "source": f"entity_{src}" if mem_id not in memory_ids else (mem_id or f"entity_{src}"),
-                    "target": f"entity_{tgt}",
+                    "source": f"entity_{s}",
+                    "target": f"entity_{t}",
                     "value": 0.8,
                     "type": "entity",
-                    "label": rel
+                    "label": r
                 })
+
+                # Eğer anı ile ilişkiliyse köprü at
+                if mem_id and mem_id in memory_ids:
+                    links.append({
+                        "source": mem_id,
+                        "target": f"entity_{s}",
+                        "value": 0.6,
+                        "type": "entity",
+                        "label": "içerir"
+                    })
+
             nodes.extend(entity_nodes.values())
         except Exception as e:
             log.warning(f"Entity graph hatası: {e}")

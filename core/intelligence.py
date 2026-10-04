@@ -233,10 +233,16 @@ Sadece kesin ilişkileri yaz, tahmin etme. Eğer ilişki yoksa boş bırak:"""
     for line in result.strip().split("\n"):
         parts = [p.strip() for p in line.split("|")]
         if len(parts) == 3 and all(parts):
+            src, rel, tgt = parts[0], parts[1], parts[2]
+            # Dolgu ve anlamsız kelimeleri filtrele
+            if src.lower() in ("-", "--", "yok", "none", "null") or tgt.lower() in ("-", "--", "yok", "none", "null"):
+                continue
+            if len(src) < 2 or len(tgt) < 2:
+                continue
             relations.append({
-                "source": parts[0],
-                "relation": parts[1],
-                "target": parts[2]
+                "source": src,
+                "relation": rel,
+                "target": tgt
             })
 
     return relations[:10]  # Max 10 ilişki

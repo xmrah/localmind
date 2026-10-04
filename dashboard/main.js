@@ -364,17 +364,37 @@
     if (state.graph.showSemantic) links.push(...rawLinks.filter(l => l.type !== 'entity' && memIds.has(l.source) && memIds.has(l.target)));
 
     if (state.graph.showEntities) {
-      const entityNodes = new Map(); // name -> node
+      const entityNodes = new Map(); // id -> node
       for (const l of rawLinks) {
         if (l.type !== 'entity') continue;
-        const srcLocal = memIds.has(l.source) ? l.source : null;
-        const tgtName = String(l.target).startsWith('entity_') ? String(l.target).slice(7) : l.target;
-        const tgtId = 'entity_' + tgtName;
-        if (!entityNodes.has(tgtId)) entityNodes.set(tgtId, { id: tgtId, label: tgtName, oda: 'entity', type: 'entity', r: 8 });
-        if (srcLocal) links.push({ source: srcLocal, target: tgtId, value: 0.7, type: 'entity', label: l.label || '' });
+        const srcStr = String(l.source);
+        const tgtStr = String(l.target);
+        const isSrcMem = memIds.has(srcStr);
+        const isTgtMem = memIds.has(tgtStr);
+        const isSrcEnt = srcStr.startsWith('entity_');
+        const isTgtEnt = tgtStr.startsWith('entity_');
+
+        // Oda filtresi varsa: sadece o odaya veya bağlı varlıklara izin ver
+        if (roomFilter && !isSrcMem && !isTgtMem) continue;
+
+        if (isSrcEnt) {
+          const name = srcStr.slice(7);
+          if (!entityNodes.has(srcStr)) entityNodes.set(srcStr, { id: srcStr, label: name, oda: 'entity', type: 'entity', r: 7.5 });
+        }
+        if (isTgtEnt) {
+          const name = tgtStr.slice(7);
+          if (!entityNodes.has(tgtStr)) entityNodes.set(tgtStr, { id: tgtStr, label: name, oda: 'entity', type: 'entity', r: 7.5 });
+        }
+
+        links.push({
+          source: srcStr,
+          target: tgtStr,
+          value: l.value || 0.7,
+          type: 'entity',
+          label: l.label || ''
+        });
       }
-      const usedEntities = new Set(links.filter(l => l.type === 'entity').map(l => typeof l.target === 'object' ? l.target.id : l.target));
-      nodes.push(...Array.from(entityNodes.values()).filter(e => usedEntities.has(e.id)));
+      nodes.push(...entityNodes.values());
     }
 
     const legend = $('#graphLegend');
@@ -403,29 +423,52 @@
     });
 
     const cx = W / 2, cy = H / 2;
+
+    // Odalara göre galaksi / takımyıldızı merkezleri hesapla
+    const roomKeys = state.rooms.map(r => r.key);
+    const roomCenters = {};
+    const R_ROOM = Math.min(W, H) * 0.30;
+    roomKeys.forEach((key, idx) => {
+      const angle = (idx / Math.max(1, roomKeys.length)) * 2 * Math.PI - Math.PI / 2;
+      roomCenters[key] = {
+        x: cx + R_ROOM * Math.cos(angle),
+        y: cy + R_ROOM * Math.sin(angle)
+      };
+    });
+
     nodeList.forEach(n => {
       if (n.x == null) {
-        const spread = Math.min(W, H) * 0.42;
-        n.x = cx + (Math.random() - 0.5) * spread;
-        n.y = cy + (Math.random() - 0.5) * spread;
+        const targetCenter = (!roomFilter && roomCenters[n.oda]) ? roomCenters[n.oda] : { x: cx, y: cy };
+        n.x = targetCenter.x + (Math.random() - 0.5) * 60;
+        n.y = targetCenter.y + (Math.random() - 0.5) * 60;
       }
     });
 
     graphSim = d3.forceSimulation(nodeList)
       .force('link', d3.forceLink(linkList).id(d => d.id)
-        .distance(d => d.type === 'entity' ? 92 : 150)
-        .strength(d => d.type === 'entity' ? 0.5 : 0.22))
-      .force('charge', d3.forceManyBody().strength(d => d.type === 'entity' ? -120 : -200).distanceMax(560))
-      .force('center', d3.forceCenter(cx, cy))
-      .force('x', d3.forceX(cx).strength(0.05))
-      .force('y', d3.forceY(cy).strength(0.05))
-      .force('collision', d3.forceCollide(d => d.r + 16));
+        .distance(d => d.type === 'entity' ? 60 : Math.max(65, 140 - (d.value || 0.5) * 75))
+        .strength(d => d.type === 'entity' ? 0.6 : 0.35))
+      .force('charge', d3.forceManyBody().strength(d => d.type === 'entity' ? -70 : -130).distanceMax(420))
+      .force('collision', d3.forceCollide(d => d.r + 13));
+
+    if (!roomFilter) {
+      // Odalarına göre yumuşak galaksi çekimi
+      graphSim
+        .force('center', d3.forceCenter(cx, cy).strength(0.04))
+        .force('roomX', d3.forceX(d => (d.type === 'entity' ? cx : (roomCenters[d.oda]?.x || cx))).strength(0.12))
+        .force('roomY', d3.forceY(d => (d.type === 'entity' ? cy : (roomCenters[d.oda]?.y || cy))).strength(0.12));
+    } else {
+      graphSim
+        .force('center', d3.forceCenter(cx, cy).strength(0.08))
+        .force('x', d3.forceX(cx).strength(0.06))
+        .force('y', d3.forceY(cy).strength(0.06));
+    }
 
     const link = g.append('g').selectAll('line').data(linkList).join('line')
       .attr('stroke', d => d.type === 'entity' ? ENTITY_COLOR : roomMeta(byId.get(d.source.id || d.source)?.oda || 'genel').color)
-      .attr('stroke-opacity', d => { if (!hasFocus) return d.type === 'entity' ? 0.35 : 0.4; return (nb.has(d.source.id || d.source) && nb.has(d.target.id || d.target)) ? 0.8 : 0.06; })
-      .attr('stroke-width', d => d.type === 'entity' ? 1 : Math.max(1, (d.value || 0.4) * 3))
-      .attr('stroke-dasharray', d => d.type === 'entity' ? '4 3' : null);
+      .attr('stroke-opacity', d => { if (!hasFocus) return d.type === 'entity' ? 0.4 : 0.45; return (nb.has(d.source.id || d.source) && nb.has(d.target.id || d.target)) ? 0.85 : 0.05; })
+      .attr('stroke-width', d => d.type === 'entity' ? 1.2 : Math.max(1, (d.value || 0.4) * 2.8))
+      .attr('stroke-dasharray', d => d.type === 'entity' ? '3 3' : null);
 
     const nodeG = g.append('g').selectAll('g').data(nodeList).join('g')
       .style('cursor', 'pointer')
@@ -448,23 +491,28 @@
 
     nodeG.each(function (d) {
       const g2 = d3.select(this);
-      const labelIt = d.type === 'entity' || (degree.get(d.id) || 0) > 0 || nb.has(d.id);
+      const deg = degree.get(d.id) || 0;
+      const isImportant = (d.importance || 5) >= 7;
+      // Etiketi göster: Varlıklar, oda filtresindeyken hepsi, odaklanılan komşular, önem >= 7 veya bağlantılı anılar
+      const labelIt = d.type === 'entity' || !!roomFilter || isImportant || deg >= 1 || nb.has(d.id);
+
       if (d.type === 'entity') {
         const s = d.r;
         g2.append('rect').attr('x', -s).attr('y', -s).attr('width', s * 2).attr('height', s * 2).attr('rx', 3)
-          .attr('transform', 'rotate(45)').attr('fill', ENTITY_COLOR).attr('opacity', () => dim(d) * 0.85)
+          .attr('transform', 'rotate(45)').attr('fill', ENTITY_COLOR).attr('opacity', () => dim(d) * 0.9)
           .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
         if (labelIt) g2.append('text').attr('text-anchor', 'middle').attr('y', s + 13).attr('font-size', 9.5)
           .attr('fill', 'var(--text-dim)').attr('opacity', () => dim(d)).attr('stroke', 'var(--bg)').attr('stroke-width', 2.5)
-          .attr('paint-order', 'stroke').text(d.label.length > 18 ? d.label.slice(0, 18) + '…' : d.label);
+          .attr('paint-order', 'stroke').text(d.label.length > 20 ? d.label.slice(0, 18) + '…' : d.label);
       } else {
         const col = roomMeta(d.oda).color;
-        g2.append('circle').attr('r', d.r + 6).attr('fill', col).attr('opacity', () => dim(d) * 0.12);
+        g2.append('circle').attr('r', d.r + 5).attr('fill', col).attr('opacity', () => dim(d) * 0.15);
         g2.append('circle').attr('r', d.r).attr('fill', col).attr('opacity', () => dim(d) * 0.92)
-          .attr('stroke', d.id === focus ? '#fff' : 'var(--bg)').attr('stroke-width', d.id === focus ? 2.4 : 1.5);
-        if (labelIt) g2.append('text').attr('text-anchor', 'middle').attr('y', d.r + 12).attr('font-size', 9.5)
-          .attr('fill', 'var(--text)').attr('opacity', () => dim(d) * 0.9).attr('stroke', 'var(--bg)').attr('stroke-width', 2.5)
-          .attr('paint-order', 'stroke').text(d.label.length > 20 ? d.label.slice(0, 20) + '…' : d.label);
+          .attr('stroke', d.id === focus ? '#fff' : 'var(--bg)').attr('stroke-width', d.id === focus ? 2.5 : 1.5);
+        if (labelIt) g2.append('text').attr('text-anchor', 'middle').attr('y', d.r + 12).attr('font-size', isImportant ? 10 : 9.2)
+          .attr('font-weight', isImportant ? '600' : '400')
+          .attr('fill', 'var(--text)').attr('opacity', () => dim(d) * 0.92).attr('stroke', 'var(--bg)').attr('stroke-width', 2.5)
+          .attr('paint-order', 'stroke').text(d.label.length > 22 ? d.label.slice(0, 20) + '…' : d.label);
       }
     });
 
