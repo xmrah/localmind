@@ -108,8 +108,7 @@ class MemoryManager:
             return
         log.info(f"FTS5 senkronizasyon: {fts_count}/{unarchived_count}")
         data = self.collection.get(include=["documents", "metadatas"])
-        uri_path = f"file:{GRAPH_DB_PATH}?mode=ro"
-        conn = sqlite3.connect(uri_path, uri=True)
+        conn = sqlite3.connect(GRAPH_DB_PATH)
         for i, mem_id in enumerate(data["ids"]):
             meta = data["metadatas"][i]
             if meta.get("archived", "false") == "true":
@@ -131,8 +130,7 @@ class MemoryManager:
         """FTS5 tablosuna ekle veya güncelle."""
         try:
             tags_str = " ".join(tags) if tags else ""
-            uri_path = f"file:{GRAPH_DB_PATH}?mode=ro"
-            conn = sqlite3.connect(uri_path, uri=True)
+            conn = sqlite3.connect(GRAPH_DB_PATH)
             conn.execute("DELETE FROM memories_fts WHERE memory_id=?", (memory_id,))
             conn.execute(
                 "INSERT INTO memories_fts(memory_id, konu, content, tags) VALUES(?,?,?,?)",
@@ -345,16 +343,53 @@ class MemoryManager:
         dolap: str = "genel",
         agent_id: str = "user",
         importance: float = 7.0,
-        created_at: str | None = None
+        created_at: str | None = None,
+        use_ai: bool = True
     ) -> dict:
         """
-        Akıllı hafıza ekleme:
-        1. Oda otomatik sınıflandırma (Ollama)
-        2. Benzer anı var mı? (ChromaDB)
-        3. Upsert kararı (Ollama)
-        4. Entity çıkarımı (Ollama)
-        5. Kaydet veya güncelle
+        Hafıza ekleme:
+        - use_ai=False ise: Doğrudan / Anında Manuel Kayıt (0 MB VRAM, ~5ms)
+        - use_ai=True ise: Akıllı mod (Ollama sınıflandırma, upsert ve entity çıkarımı)
         """
+        if not use_ai:
+            # Doğrudan / Hızlı Manuel Kayıt: LLM hiç çağrılmaz, VRAM tüketimi sıfır (0 MB)
+            if not oda:
+                oda = "genel"
+            now = created_at if created_at else datetime.now().isoformat()
+            meta = {
+                "konu": konu,
+                "oda": oda,
+                "kanat": kanat,
+                "dolap": dolap,
+                "agent_id": agent_id,
+                "importance": str(importance),
+                "access_count": "0",
+                "created_at": now,
+                "updated_at": datetime.now().isoformat(),
+                "tags": json.dumps([], ensure_ascii=False),
+                "archived": "false"
+            }
+            import uuid
+            new_id = str(uuid.uuid4())
+            await asyncio.to_thread(self.collection.add,
+                ids=[new_id],
+                documents=[bilgi],
+                metadatas=[meta]
+            )
+            await asyncio.to_thread(self._fts_upsert, new_id, konu, bilgi, [])
+            log.info(f"⚡ [MANUEL] '{konu}' 0 MB VRAM ile anında kaydedildi.")
+            return {
+                "status": "created",
+                "id": new_id,
+                "oda": oda,
+                "kanat": kanat,
+                "dolap": dolap,
+                "created_at": now,
+                "tags": [],
+                "relations": 0,
+                "message": f"⚡ [{oda.upper()}] '{konu}' anında hafızaya işlendi (0 MB VRAM)"
+            }
+
         ollama_ok = await is_ollama_available()
 
         # 1. Oda sınıflandırma

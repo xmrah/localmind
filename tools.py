@@ -45,11 +45,22 @@ async def hafizaya_yaz(
     dolap: str = Field("genel", description="Dolap / Konu öbeği (opsiyonel)"),
     importance: float = Field(7.0, description="Önem skoru 1-10 (varsayılan: 7)"),
     agent_id: str = Field("user", description="Yazan ajan kimliği (opsiyonel, varsayılan: user)"),
-    created_at: str | None = Field(None, description="Özel kayıt zaman damgası (ISO-8601 formatı, opsiyonel)")
+    created_at: str | None = Field(None, description="Özel kayıt zaman damgası (ISO-8601 formatı, opsiyonel)"),
+    use_ai: bool = Field(True, description="Ollama ile sınıflandırma ve grafik analizi yapılsın mı? False ise 0 MB VRAM ile anında yazar.")
 ) -> str:
-    """Bir bilgiyi Zihin Sarayı'na akıllıca kaydet. Otomatik sınıflandırma, upsert ve entity çıkarımı yapar."""
+    """Bir bilgiyi Zihin Sarayı'na kaydet. use_ai=True ise Ollama ile akıllı sınıflandırma ve entity çıkarımı yapar, False ise 0 MB VRAM ile anında yazar."""
     mgr = get_manager()
-    result = await mgr.add_memory(konu=konu, bilgi=bilgi, oda=oda, kanat=kanat, dolap=dolap, agent_id=agent_id, importance=importance, created_at=created_at)
+    result = await mgr.add_memory(
+        konu=konu,
+        bilgi=bilgi,
+        oda=oda,
+        kanat=kanat,
+        dolap=dolap,
+        agent_id=agent_id,
+        importance=importance,
+        created_at=created_at,
+        use_ai=use_ai
+    )
     return result.get("message", json.dumps(result, ensure_ascii=False))
 
 

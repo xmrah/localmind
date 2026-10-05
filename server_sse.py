@@ -60,6 +60,7 @@ class AddMemoryRequest(BaseModel):
     created_at: str | None = None
     agent_id: str = "user"
     importance: float = 7.0
+    use_ai: bool = False
 
 class ArchiveRequest(BaseModel):
     memory_id: str
@@ -171,7 +172,8 @@ async def add_memory(req: AddMemoryRequest):
         dolap=req.dolap or "genel",
         created_at=req.created_at,
         agent_id=req.agent_id,
-        importance=req.importance
+        importance=req.importance,
+        use_ai=req.use_ai
     )
     return result
 

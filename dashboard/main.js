@@ -1047,6 +1047,21 @@
         </div>
       </div>
 
+      <!-- OLLAMA AI TOGGLE -->
+      <div class="form-row" style="background:var(--surface);padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div>
+          <div style="font-weight:600;font-size:.85rem;display:flex;align-items:center;gap:8px;">
+            <span>🤖 Ollama AI Analizi</span>
+            <span class="badge" id="aiModeBadge" style="font-size:.68rem;padding:2px 8px;background:var(--surface-hover);color:var(--text-dim);border:1px solid var(--border);">Hızlı (0 MB VRAM)</span>
+          </div>
+          <div class="muted small" id="aiModeDesc" style="margin-top:3px;font-size:.75rem;">Model VRAM'e yüklenmez, anı 10ms içinde anında kaydedilir.</div>
+        </div>
+        <label class="switch" title="Açıkken Ollama ile varlık çıkarımı ve bilgi grafiği analizi yapılır">
+          <input type="checkbox" id="fUseAi" />
+          <span class="track"></span>
+        </label>
+      </div>
+
       <div style="display:flex;gap:12px;margin-top:14px">
         <button class="btn primary" id="fSave" style="flex:1;justify-content:center;">💾 Hafızaya İşle</button>
         <button class="btn ghost" onclick="closeModal()">İptal</button>
@@ -1068,25 +1083,50 @@
       fResetDate.onclick = () => { fTarih.value = ''; toast('Tarih şimdiki zamana ayarlandı'); };
     }
 
+    // AI toggle dinamik etiket
+    const fUseAi = $('#fUseAi');
+    const aiModeBadge = $('#aiModeBadge');
+    const aiModeDesc = $('#aiModeDesc');
+    if (fUseAi && aiModeBadge && aiModeDesc) {
+      fUseAi.onchange = () => {
+        if (fUseAi.checked) {
+          aiModeBadge.textContent = 'Akıllı Mod (VRAM Aktif)';
+          aiModeBadge.style.background = 'color-mix(in srgb, var(--violet) 20%, transparent)';
+          aiModeBadge.style.color = 'var(--violet)';
+          aiModeBadge.style.borderColor = 'var(--violet)';
+          aiModeDesc.textContent = 'Ollama modeli yüklenir; varlık çıkarımı, bilgi grafiği ve çakışma tespiti yapılır.';
+        } else {
+          aiModeBadge.textContent = 'Hızlı (0 MB VRAM)';
+          aiModeBadge.style.background = 'var(--surface-hover)';
+          aiModeBadge.style.color = 'var(--text-dim)';
+          aiModeBadge.style.borderColor = 'var(--border)';
+          aiModeDesc.textContent = 'Model VRAM\'e yüklenmez, anı 10ms içinde anında kaydedilir.';
+        }
+      };
+    }
+
     $('#fImp').oninput = e => $('#fImpVal').textContent = '★ ' + e.target.value + '/10';
 
     $('#fSave').onclick = async () => {
       const konu = $('#fKonu').value.trim(), bilgi = $('#fBilgi').value.trim();
       if (!konu || !bilgi) { toast('Konu ve bilgi alanları zorunludur.', 'err'); return; }
 
+      const useAi = !!($('#fUseAi') && $('#fUseAi').checked);
       const tarih = $('#fTarih').value;
       const isoTarih = tarih ? new Date(tarih).toISOString() : null;
       const body = {
         konu, bilgi,
-        oda: $('#fOda').value || null,
-        kanat: $('#fKanat').value.trim() || null,
-        dolap: $('#fDolap').value.trim() || null,
+        oda: $('#fOda').value || (useAi ? null : 'genel'),
+        kanat: $('#fKanat').value.trim() || 'genel',
+        dolap: $('#fDolap').value.trim() || 'genel',
         created_at: isoTarih,
         importance: Number($('#fImp').value),
-        agent_id: 'user'
+        agent_id: 'user',
+        use_ai: useAi
       };
 
-      $('#fSave').textContent = 'Ollama işliyor…'; $('#fSave').disabled = true;
+      $('#fSave').textContent = useAi ? 'Ollama işliyor…' : 'Kaydediliyor…';
+      $('#fSave').disabled = true;
       const r = await api('/api/memory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
