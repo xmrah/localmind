@@ -4,8 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Localmind · Zihin Sarayı Paneli</title>
-  <link rel="stylesheet" href="style.css?v=2.0.1" />
+  <link rel="stylesheet" href="style.css?v=2.0.2" />
   <script src="d3.v7.min.js"></script>
+  <script src="icons.js"></script>
 </head>
 <body>
   <!-- Ambient arka plan -->
@@ -14,10 +15,12 @@
   <div class="app">
     <!-- ───────────── HEADER ───────────── -->
     <header class="topbar">
-      <button class="icon-btn only-mobile" id="menuToggle" title="Menü">☰</button>
+      <button class="icon-btn only-mobile" id="menuToggle" title="Menü">
+        <span data-ico="menu" data-ico-size="18"></span>
+      </button>
 
       <div class="brand" onclick="navigate('overview')">
-        <span class="brand-icon">🧠</span>
+        <span class="brand-icon" data-ico="brain" data-ico-size="24"></span>
         <div class="brand-text">
           <b>Localmind</b>
           <small>Zihin Sarayı</small>
@@ -25,7 +28,7 @@
       </div>
 
       <div class="global-search">
-        <span class="gs-icon">⌕</span>
+        <span class="gs-icon" data-ico="search" data-ico-size="17"></span>
         <input id="globalSearch" type="text" autocomplete="off"
                placeholder="Hafızada ara… (Enter ile semantik arama)" />
         <div id="searchResults" class="search-results hidden"></div>
@@ -41,8 +44,15 @@
         <div class="pill total-pill" title="Toplam anı">
           <b id="headerTotal">0</b> <span>anı</span>
         </div>
-        <button class="btn ghost" id="addBtn" title="Yeni anı ekle">+ Yeni Anı</button>
-        <button class="icon-btn" id="themeToggle" title="Tema değiştir">◐</button>
+        <button class="btn ghost kbd-hint" id="cmdkOpen" title="Komut paleti (Ctrl/⌘ + K)">
+          <span data-ico="search" data-ico-size="15"></span><span class="kbd-hint-label">Komut</span><span class="kbd">⌘K</span>
+        </button>
+        <button class="btn ghost" id="addBtn" title="Yeni anı ekle">
+          <span data-ico="plus" data-ico-size="15"></span>Yeni Anı
+        </button>
+        <button class="icon-btn" id="themeToggle" title="Tema değiştir">
+          <span data-ico="moon" data-ico-size="17"></span>
+        </button>
       </div>
     </header>
 
@@ -51,14 +61,14 @@
       <aside class="sidebar" id="sidebar">
         <nav class="nav-group">
           <h4>PANEL</h4>
-          <a class="nav-link" data-view="overview" href="#overview"><span>🏠</span>Genel Bakış</a>
-          <a class="nav-link" data-view="graph" href="#graph"><span>🕸️</span>Bilgi Grafiği</a>
-          <a class="nav-link" data-view="rooms" href="#rooms"><span>🗂️</span>Odalar</a>
-          <a class="nav-link" data-view="timeline" href="#timeline"><span>🕰️</span>Zaman Çizelgesi</a>
-          <a class="nav-link" data-view="analytics" href="#analytics"><span>📊</span>Analitik</a>
-          <a class="nav-link" data-view="reminders" href="#reminders"><span>🔔</span>Hatırlatmalar</a>
-          <a class="nav-link" data-view="archive" href="#archive"><span>📦</span>Arşiv</a>
-          <a class="nav-link" data-view="settings" href="#settings"><span>⚙️</span>Ayarlar</a>
+          <a class="nav-link" data-view="overview" href="#overview"><span class="ni" data-ico="home" data-ico-size="18"></span>Genel Bakış</a>
+          <a class="nav-link" data-view="graph" href="#graph"><span class="ni" data-ico="graph" data-ico-size="18"></span>Bilgi Grafiği</a>
+          <a class="nav-link" data-view="rooms" href="#rooms"><span class="ni" data-ico="rooms" data-ico-size="18"></span>Odalar</a>
+          <a class="nav-link" data-view="timeline" href="#timeline"><span class="ni" data-ico="timeline" data-ico-size="18"></span>Zaman Çizelgesi</a>
+          <a class="nav-link" data-view="analytics" href="#analytics"><span class="ni" data-ico="analytics" data-ico-size="18"></span>Analitik</a>
+          <a class="nav-link" data-view="reminders" href="#reminders"><span class="ni" data-ico="bell" data-ico-size="18"></span>Hatırlatmalar</a>
+          <a class="nav-link" data-view="archive" href="#archive"><span class="ni" data-ico="archive" data-ico-size="18"></span>Arşiv</a>
+          <a class="nav-link" data-view="settings" href="#settings"><span class="ni" data-ico="settings" data-ico-size="18"></span>Ayarlar</a>
         </nav>
 
         <nav class="nav-group">
@@ -77,7 +87,21 @@
 
       <!-- ───────────── MAIN ───────────── -->
       <main class="content" id="content">
-        <div class="loading-full"><div class="spinner"></div></div>
+        <!-- İlk boya iskeleti: main.js devralana kadar shimmer gösterir -->
+        <div class="skel-page" aria-busy="true" aria-label="Yükleniyor">
+          <div class="skel-head"><div class="sk" style="width:180px;height:22px"></div><div class="sk" style="width:300px;height:12px"></div></div>
+          <div class="grid cols-kpi">
+            <div class="skel-card skel-kpi"><div class="sk" style="width:52%;height:10px"></div><div class="sk" style="width:40%;height:26px"></div><div class="sk" style="width:66%;height:9px"></div></div>
+            <div class="skel-card skel-kpi"><div class="sk" style="width:52%;height:10px"></div><div class="sk" style="width:40%;height:26px"></div><div class="sk" style="width:66%;height:9px"></div></div>
+            <div class="skel-card skel-kpi"><div class="sk" style="width:52%;height:10px"></div><div class="sk" style="width:40%;height:26px"></div><div class="sk" style="width:66%;height:9px"></div></div>
+            <div class="skel-card skel-kpi"><div class="sk" style="width:52%;height:10px"></div><div class="sk" style="width:40%;height:26px"></div><div class="sk" style="width:66%;height:9px"></div></div>
+            <div class="skel-card skel-kpi"><div class="sk" style="width:52%;height:10px"></div><div class="sk" style="width:40%;height:26px"></div><div class="sk" style="width:66%;height:9px"></div></div>
+          </div>
+          <div class="grid cols-2">
+            <div class="skel-card"><div class="skel-lines" style="margin-bottom:16px"><div class="sk" style="width:42%;height:13px"></div></div><div class="skel-lines"><div class="sk" style="width:92%;height:11px"></div><div class="sk" style="width:78%;height:11px"></div><div class="sk" style="width:85%;height:11px"></div><div class="sk" style="width:64%;height:11px"></div><div class="sk" style="width:88%;height:11px"></div><div class="sk" style="width:72%;height:11px"></div><div class="sk" style="width:80%;height:11px"></div></div></div>
+            <div class="skel-card"><div class="skel-lines" style="margin-bottom:16px"><div class="sk" style="width:42%;height:13px"></div></div><div class="skel-lines"><div class="sk" style="width:92%;height:11px"></div><div class="sk" style="width:78%;height:11px"></div><div class="sk" style="width:85%;height:11px"></div><div class="sk" style="width:64%;height:11px"></div><div class="sk" style="width:88%;height:11px"></div><div class="sk" style="width:72%;height:11px"></div><div class="sk" style="width:80%;height:11px"></div><div class="sk" style="width:58%;height:11px"></div><div class="sk" style="width:90%;height:11px"></div></div></div>
+          </div>
+        </div>
       </main>
     </div>
   </div>
@@ -87,12 +111,33 @@
     <div class="modal" id="modal"></div>
   </div>
 
+  <!-- ⌘K Komut Paleti -->
+  <div class="cmdk hidden" id="cmdk" role="dialog" aria-modal="true" aria-label="Komut paleti">
+    <div class="cmdk-backdrop" data-cmdk-close></div>
+    <div class="cmdk-panel" role="document">
+      <div class="cmdk-search">
+        <span class="cmdk-ico" data-ico="search" data-ico-size="18"></span>
+        <input id="cmdkInput" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Ara, git veya bir komut çalıştır…" role="combobox"
+               aria-expanded="true" aria-controls="cmdkList" aria-autocomplete="list" />
+        <span class="kbd">ESC</span>
+      </div>
+      <div class="cmdk-list" id="cmdkList" role="listbox" aria-label="Sonuçlar"></div>
+      <div class="cmdk-foot">
+        <span><span class="kbd">↑</span><span class="kbd">↓</span> gez</span>
+        <span><span class="kbd">↵</span> seç</span>
+        <span><span class="kbd">esc</span> kapat</span>
+        <span class="cmdk-brand">Localmind · <b>⌘K</b></span>
+      </div>
+    </div>
+  </div>
+
   <!-- Hover tooltip -->
   <div class="tooltip hidden" id="tooltip"></div>
 
   <!-- Toast -->
   <div class="toast hidden" id="toast"></div>
 
-  <script src="main.js?v=2.0.1"></script>
+  <script src="main.js?v=2.0.2"></script>
 </body>
 </html>

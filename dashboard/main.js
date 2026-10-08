@@ -7,30 +7,34 @@
   'use strict';
 
   /* ─────────────────────────── CONFIG ─────────────────────────── */
+  /* Oda meta verisi. `ico` = Lucide ikon adı (icons.js). Emoji YOK. */
   const ROOM_META = {
-    mimari:    { label: 'Mimari',     color: '#a855f7', icon: '🏗️' },
-    guvenlik:  { label: 'Güvenlik',   color: '#4d7cff', icon: '🛡️' },
-    donanim:   { label: 'Donanım',    color: '#22e3c0', icon: '🖥️' },
-    ogrenme:   { label: 'Öğrenme',    color: '#f5a524', icon: '📚' },
-    kisisel:   { label: 'Kişisel',    color: '#ec4899', icon: '🧬' },
-    genel:     { label: 'Genel',      color: '#7c86a0', icon: '🗂️' },
-    proje:     { label: 'Proje',      color: '#38bdf8', icon: '🚀' },
-    fikir:     { label: 'Fikir',      color: '#c084fc', icon: '💡' },
-    arastirma: { label: 'Araştırma',  color: '#2dd4bf', icon: '🔬' },
-    saglik:    { label: 'Sağlık',     color: '#4ade80', icon: '❤️' },
-    finans:    { label: 'Finans',     color: '#facc15', icon: '💰' },
-    iletisim:  { label: 'İletişim',   color: '#fb7185', icon: '✉️' },
+    mimari:    { label: 'Mimari',     color: '#a855f7', ico: 'building' },
+    guvenlik:  { label: 'Güvenlik',   color: '#4d7cff', ico: 'shield' },
+    donanim:   { label: 'Donanım',    color: '#22e3c0', ico: 'monitor' },
+    ogrenme:   { label: 'Öğrenme',    color: '#f5a524', ico: 'bookOpen' },
+    kisisel:   { label: 'Kişisel',    color: '#ec4899', ico: 'heart' },
+    genel:     { label: 'Genel',      color: '#7c86a0', ico: 'folder' },
+    proje:     { label: 'Proje',      color: '#38bdf8', ico: 'rocket' },
+    fikir:     { label: 'Fikir',      color: '#c084fc', ico: 'lightbulb' },
+    arastirma: { label: 'Araştırma',  color: '#2dd4bf', ico: 'flask' },
+    saglik:    { label: 'Sağlık',     color: '#4ade80', ico: 'heartPulse' },
+    finans:    { label: 'Finans',     color: '#facc15', ico: 'wallet' },
+    iletisim:  { label: 'İletişim',   color: '#fb7185', ico: 'mail' },
   };
   const FALLBACK = ['#818cf8', '#f472b6', '#34d399', '#fbbf24', '#fb923c', '#60a5fa', '#a78bfa', '#2dd4bf'];
   const ENTITY_COLOR = '#eab308';
   let DECAY = 0.99;
+
+  /* İkon yardımcısı. icons.js main.js'ten önce yüklenir; yoksa sessizce boş döner. */
+  const ico = (name, size, cls) => (typeof window.icon === 'function' ? window.icon(name, size || 16, cls || '') : '');
 
   function roomMeta(name) {
     const key = (name || 'genel').toLowerCase();
     if (ROOM_META[key]) return ROOM_META[key];
     let h = 0;
     for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-    return { label: name || 'Genel', color: FALLBACK[h % FALLBACK.length], icon: '•' };
+    return { label: name || 'Genel', color: FALLBACK[h % FALLBACK.length], ico: 'circle' };
   }
 
   /* ─────────────────────────── STATE ─────────────────────────── */
@@ -180,7 +184,7 @@
     }
     state.rooms = Array.from(map.values()).map(r => {
       const meta = roomMeta(r.key);
-      return { ...r, label: meta.label, color: meta.color, icon: meta.icon, avgImp: r.count ? r.impSum / r.count : 0 };
+      return { ...r, label: meta.label, color: meta.color, ico: meta.ico, avgImp: r.count ? r.impSum / r.count : 0 };
     }).sort((a, b) => b.count - a.count);
   }
 
@@ -240,30 +244,56 @@
     return { view: view || 'overview', param: param ? decodeURIComponent(param) : null };
   }
 
+  let routeToken = 0;
   async function router() {
+    const my = ++routeToken;
     state.route = getRoute();
     const c = $('#content');
     $$('.nav-link').forEach(a => a.classList.toggle('active', a.dataset.view === state.route.view));
     $$('.room-link').forEach(a => a.classList.toggle('active', a.dataset.room === state.route.param));
     $('#sidebar').classList.remove('open');
 
+    // Veriyi geçişten ÖNCE hazırla; böylece iskelet durumu animasyona sızmaz.
     await loadCore();
-    const v = state.route.view;
-    if (v === 'overview') await viewOverview(c);
-    else if (v === 'graph') await viewGraph(c);
-    else if (v === 'rooms') viewRooms(c);
-    else if (v === 'room') viewRoomDetail(c, state.route.param);
-    else if (v === 'timeline') viewTimeline(c);
-    else if (v === 'analytics') viewAnalytics(c);
-    else if (v === 'reminders') viewReminders(c);
-    else if (v === 'archive') await viewArchive(c);
-    else if (v === 'settings') viewSettings(c);
-    else await viewOverview(c);
+    if (my !== routeToken) return;
+
+    await withTransition(async () => {
+      if (my !== routeToken) return;
+      const v = state.route.view;
+      if (v === 'overview') await viewOverview(c);
+      else if (v === 'graph') await viewGraph(c);
+      else if (v === 'rooms') viewRooms(c);
+      else if (v === 'room') viewRoomDetail(c, state.route.param);
+      else if (v === 'timeline') viewTimeline(c);
+      else if (v === 'analytics') await viewAnalytics(c);
+      else if (v === 'reminders') await viewReminders(c);
+      else if (v === 'archive') await viewArchive(c);
+      else if (v === 'settings') viewSettings(c);
+      else await viewOverview(c);
+      if (typeof window.hydrateIcons === 'function') window.hydrateIcons(c);
+    });
   }
 
-  function loadingHTML() { return '<div class="loading-full"><div class="spinner"></div><div>Zihin sarayı yükleniyor…</div></div>'; }
-  function emptyHTML(msg, icon = '🧠') { return `<div class="empty"><div class="em">${icon}</div><div>${esc(msg)}</div></div>`; }
-  function errorHTML() { return `<div class="empty"><div class="em">🔌</div><div>Hafızaya ulaşılamadı.<br><span class="small">Sunucunun (<code>python server_sse.py</code>) çalıştığından emin ol.</span></div></div>`; }
+  /* ── İskelet (shimmer) yükleyiciler ───────────────────────── */
+  function skelLine(w, h) { return `<div class="sk" style="width:${w};height:${h}px"></div>`; }
+  function skelPanel(lines) {
+    const widths = ['92%', '78%', '85%', '64%', '88%', '72%', '80%', '58%', '90%', '68%'];
+    const body = Array.from({ length: lines }, (_, i) => skelLine(widths[i % widths.length], 11)).join('');
+    return `<div class="skel-card"><div class="skel-lines" style="margin-bottom:16px">${skelLine('42%', 13)}</div><div class="skel-lines">${body}</div></div>`;
+  }
+  function skeletonView() {
+    const kpis = Array.from({ length: 5 }, () =>
+      `<div class="skel-card skel-kpi">${skelLine('52%', 10)}${skelLine('40%', 26)}${skelLine('66%', 9)}</div>`).join('');
+    return `<div class="skel-page" aria-busy="true" aria-live="polite" aria-label="Yükleniyor">
+      <div class="skel-head">${skelLine('180px', 22)}${skelLine('300px', 12)}</div>
+      <div class="grid cols-kpi">${kpis}</div>
+      <div class="grid cols-2">${skelPanel(7)}${skelPanel(9)}</div>
+      <div class="grid cols-2">${skelPanel(6)}${skelPanel(6)}</div>
+    </div>`;
+  }
+  function loadingHTML() { return skeletonView(); }
+  function emptyHTML(msg, icoName = 'brain') { return `<div class="empty"><div class="em">${ico(icoName, 40)}</div><div>${esc(msg)}</div></div>`; }
+  function errorHTML() { return `<div class="empty"><div class="em">${ico('wifiOff', 40)}</div><div>Hafızaya ulaşılamadı.<br><span class="small">Sunucunun (<code>python server_sse.py</code>) çalıştığından emin ol.</span></div></div>`; }
 
   function viewShell(title, subtitle, controls, inner) {
     return `<div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${controls || ''}</div>${inner || ''}`;
@@ -288,7 +318,7 @@
     renderRoomNav();
     await loadReminders();
     const mem = state.memories;
-    if (!mem.length) { c.innerHTML = viewShell('Genel Bakış', 'Zihin sarayına genel bakış', '', emptyHTML('Henüz hiç anı yok. İlk anını “+ Yeni Anı” ile ekle.', '✨')); return; }
+    if (!mem.length) { c.innerHTML = viewShell('Genel Bakış', 'Zihin sarayına genel bakış', '', emptyHTML('Henüz hiç anı yok. İlk anını “Yeni Anı” ile ekle.', 'sparkle')); return; }
 
     const total = mem.length;
     const roomCount = state.rooms.length;
@@ -312,14 +342,14 @@
 
       <div class="grid cols-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); margin-bottom:16px">
         <div class="card">
-          <h3>🗂️ Oda Dağılımı <span class="sub">${roomCount} oda</span></h3>
+          <h3>${ico('folder', 15)} Oda Dağılımı <span class="sub">${roomCount} oda</span></h3>
           ${donut.html}
         </div>
         <div class="card">
-          <h3>🏷️ Öne Çıkan Etiketler <span class="sub">anı sayısına göre</span></h3>
+          <h3>${ico('tag', 15)} Öne Çıkan Etiketler <span class="sub">anı sayısına göre</span></h3>
           ${topTags.length ? topTags.map(t => barRow(t.tag, t.count, topTags[0].count, 'var(--cyan)')).join('') : '<div class="muted small">henüz etiket yok</div>'}
           <div style="margin-top:14px">
-            <h3 style="margin-bottom:10px">🔔 Hatırlatılması Gerekenler</h3>
+            <h3 style="margin-bottom:10px">${ico('bell', 15)} Hatırlatılması Gerekenler</h3>
             ${reminders.length ? reminders.slice(0, 4).map(r => miniReminder(r)).join('') : '<div class="muted small">harika — bekleyen hatırlatma yok</div>'}
           </div>
         </div>
@@ -327,11 +357,11 @@
 
       <div class="grid cols-2">
         <div class="card">
-          <h3>🆕 Son Eklenen Anılar <span class="sub">en yeni 6</span></h3>
+          <h3>${ico('sparkle', 15)} Son Eklenen Anılar <span class="sub">en yeni 6</span></h3>
           <div class="mem-list">${recent.map(m => memItem(m)).join('')}</div>
         </div>
         <div class="card">
-          <h3>🕸️ En Bağlantılı Anılar <span class="sub">semantik + varlık</span></h3>
+          <h3>${ico('graph', 15)} En Bağlantılı Anılar <span class="sub">semantik + varlık</span></h3>
           ${topConnected().map(x => memItem(x.m)).join('') || '<div class="muted small">bağlantı verisi yok</div>'}
         </div>
       </div>`;
@@ -359,7 +389,7 @@
     if (state.graphError) { c.innerHTML = errorHTML(); return; }
     if (!window.d3) {
       c.innerHTML = viewShell('Bilgi Grafiği', 'Zihin sarayının ilişki ağı', '') +
-        emptyHTML('Grafik motoru (d3.v7.min.js) bulunamadı. Dosyayı dashboard/ klasörüne koy.', '🕸️');
+        emptyHTML('Grafik motoru (d3.v7.min.js) bulunamadı. Dosyayı dashboard/ klasörüne koy.', 'graph');
       return;
     }
     const rooms = state.rooms;
@@ -368,8 +398,8 @@
       <label class="switch"><input type="checkbox" id="gLabels" ${state.graph.showAllLabels ? 'checked' : ''}/><span class="track"></span>Tüm etiketler</label>
       <label class="switch"><input type="checkbox" id="gEntities" ${state.graph.showEntities ? 'checked' : ''}/><span class="track"></span>Varlıklar</label>
       <label class="switch"><input type="checkbox" id="gSemantic" ${state.graph.showSemantic ? 'checked' : ''}/><span class="track"></span>Anlamsal bağlar</label>
-      <button class="btn small" id="gFit">⊡ Sığdır</button>
-      <button class="btn small" id="gReheat">↻ Düzenle</button>
+      <button class="btn small" id="gFit">${ico('maximize', 15)} Sığdır</button>
+      <button class="btn small" id="gReheat">${ico('refresh', 15)} Düzenle</button>
     </div>`;
     c.innerHTML = viewShell('Bilgi Grafiği', 'Anılar, kavramlar ve mimari yapılar arasındaki semantik ağ', controls) + `
       <div class="graph-wrap">
@@ -469,7 +499,7 @@
     if (legend) legend.innerHTML = state.rooms.map(r => `<span class="lg"><i style="background:${r.color}"></i>${esc(r.label)}</span>`).join('') +
       (state.graph.showEntities ? `<span class="lg"><i style="background:${ENTITY_COLOR};border-radius:2px"></i>Varlık</span>` : '');
 
-    if (!nodes.length) { area.innerHTML = emptyHTML('Bu filtrede gösterilecek anı yok.', '🕸️'); return; }
+    if (!nodes.length) { area.innerHTML = emptyHTML('Bu filtrede gösterilecek anı yok.', 'graph'); return; }
 
     const svg = d3.select(area).append('svg').attr('width', W).attr('height', H);
     graphSvg = svg;
@@ -695,7 +725,7 @@
 
   function showTip(e, d) {
     const tip = $('#tooltip');
-    if (d.type === 'entity') tip.innerHTML = `<b>🏷️ ${esc(d.label)}</b><div class="tt-dim">Knowledge Graph varlığı</div>`;
+    if (d.type === 'entity') tip.innerHTML = `<b>${ico('tag', 13)} ${esc(d.label)}</b><div class="tt-dim">Knowledge Graph varlığı</div>`;
     else tip.innerHTML = `<b>${esc(d.label)}</b><div class="tt-dim">${esc(roomMeta(d.oda).label)} · önem ${d.importance}/10</div><div class="tt-dim">${esc(ago(d.created_at))}</div>`;
     tip.classList.remove('hidden'); moveTip(e);
   }
@@ -706,13 +736,13 @@
   async function viewRooms(c) {
     if (state.graphError) { c.innerHTML = errorHTML(); return; }
     renderRoomNav();
-    if (!state.rooms.length) { c.innerHTML = viewShell('Odalar', 'Otomatik sınıflandırılmış hafıza odaları', '', emptyHTML('Henüz oda yok.', '🗂️')); return; }
+    if (!state.rooms.length) { c.innerHTML = viewShell('Odalar', 'Otomatik sınıflandırılmış hafıza odaları', '', emptyHTML('Henüz oda yok.', 'folder')); return; }
     c.innerHTML = viewShell('Odalar', 'Anıların otomatik yerleştirildiği odalar', '') + `
       <div class="grid cols-3">
         ${state.rooms.map(r => `
           <div class="card" style="cursor:pointer;border-left:3px solid ${r.color}" onclick="navigate('room','${esc(r.key)}')">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-              <span style="font-size:1.5rem">${r.icon}</span>
+              <span style="display:inline-flex;color:${r.color}">${ico(r.ico, 24)}</span>
               <div><div style="font-weight:700">${esc(r.label)}</div><div class="muted small">${r.count} anı · ort. önem ${r.avgImp.toFixed(1)}</div></div>
             </div>
             <div class="bar-track" style="margin-bottom:8px"><div class="bar-fill" style="width:${clamp(r.count / state.rooms[0].count * 100, 4, 100)}%;background:${r.color}"></div></div>
@@ -727,11 +757,11 @@
     const all = state.memories.filter(m => (m.oda || 'genel') === oda);
     const meta = roomMeta(oda);
     renderRoomNav();
-    if (!all.length) { c.innerHTML = viewShell(meta.label, 'Bu odada anı yok', '') + emptyHTML('Bu odada henüz anı yok.', meta.icon); return; }
+    if (!all.length) { c.innerHTML = viewShell(meta.label, 'Bu odada anı yok', '') + emptyHTML('Bu odada henüz anı yok.', meta.ico); return; }
 
-    c.innerHTML = viewShell(`${meta.icon} ${meta.label}`,
+    c.innerHTML = viewShell(`${meta.label}`,
       `${all.length} anı · ortalama önem ${(all.reduce((a, m) => a + m.importance, 0) / all.length).toFixed(1)}`,
-      `<button class="btn small ghost" onclick="navigate('rooms')">← Tüm odalar</button>`) + `
+      `<button class="btn small ghost" onclick="navigate('rooms')">${ico('arrowLeft', 15)} Tüm odalar</button>`) + `
       <div class="controls">
         <input class="field" id="roomSearch" type="text" placeholder="Bu odada semantik ara…" style="min-width:280px" />
         <div class="seg" id="roomSort">
@@ -768,7 +798,7 @@
       const list = res.map(r => ({ id: r.id, konu: r.konu, bilgi: r.content, oda: r.oda, importance: r.importance, tags: r.tags || [], created_at: r.created_at, _score: r.score }));
       const box = $('#roomList');
       box.innerHTML = `<div class="muted small" style="margin-bottom:10px">${list.length} sonuç · semantik arama</div>` +
-        (list.length ? `<div class="mem-list">${list.map(m => memItem(m)).join('')}</div>` : emptyHTML('Sonuç yok.', '🔍'));
+        (list.length ? `<div class="mem-list">${list.map(m => memItem(m)).join('')}</div>` : emptyHTML('Sonuç yok.', 'search'));
       bindMemItems(box);
     }, 350));
   }
@@ -782,7 +812,7 @@
     const controls = `<div class="seg" id="tlRange">
       ${[7, 30, 90, 3650].map(d => `<button data-d="${d}" class="${d === days ? 'active' : ''}">${d === 3650 ? 'Tümü' : 'Son ' + d + ' gün'}</button>`).join('')}
     </div>`;
-    if (!mem.length) { c.innerHTML = viewShell('Zaman Çizelgesi', 'Zamana yayılmış anılar', controls) + emptyHTML('Bu aralıkta anı yok.', '🕰️'); bindRange(c); return; }
+    if (!mem.length) { c.innerHTML = viewShell('Zaman Çizelgesi', 'Zamana yayılmış anılar', controls) + emptyHTML('Bu aralıkta anı yok.', 'timeline'); bindRange(c); return; }
 
     const sorted = [...mem].sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
     const groups = new Map();
@@ -795,7 +825,7 @@
 
     c.innerHTML = viewShell('Zaman Çizelgesi', `${mem.length} anı · son ${days === 3650 ? 'tüm zamanlar' : days + ' gün'}`, controls) + `
       <div class="card" style="margin-bottom:16px">
-        <h3>📈 Günlük Kayıt Aktivitesi <span class="sub">son ${activity.length} gün</span></h3>
+        <h3>${ico('trending', 15)} Günlük Kayıt Aktivitesi <span class="sub">son ${activity.length} gün</span></h3>
         ${areaSVG(activity)}
       </div>
       <div>${Array.from(groups.entries()).map(([day, items]) => `
@@ -817,7 +847,7 @@
     if (state.graphError) { c.innerHTML = errorHTML(); return; }
     renderRoomNav();
     const mem = state.memories;
-    if (!mem.length) { c.innerHTML = viewShell('Analitik', 'Hafızanın sayısal görünümü', '') + emptyHTML('Analiz için henüz veri yok.', '📊'); return; }
+    if (!mem.length) { c.innerHTML = viewShell('Analitik', 'Hafızanın sayısal görünümü', '') + emptyHTML('Analiz için henüz veri yok.', 'analytics'); return; }
     await loadReminders();
 
     const donut = donutSVG(state.rooms.map(r => ({ label: r.label, value: r.count, color: r.color })));
@@ -845,20 +875,20 @@
       </div>
 
       <div class="grid cols-2" style="margin-bottom:16px">
-        <div class="card"><h3>🗂️ Oda Dağılımı</h3>${donut.html}</div>
-        <div class="card"><h3>🏷️ En Çok Kullanılan Etiketler <span class="sub">ilk 12</span></h3>
+        <div class="card"><h3>${ico('folder', 15)} Oda Dağılımı</h3>${donut.html}</div>
+        <div class="card"><h3>${ico('tag', 15)} En Çok Kullanılan Etiketler <span class="sub">ilk 12</span></h3>
           ${tags.length ? tags.map(t => barRow(t.tag, t.count, tags[0].count, 'var(--cyan)')).join('') : '<div class="muted small">etiket yok</div>'}
         </div>
       </div>
 
       <div class="grid cols-2" style="margin-bottom:16px">
-        <div class="card"><h3>📊 Önem Skoru Dağılımı <span class="sub">1–10</span></h3>${hist}</div>
-        <div class="card"><h3>🌡️ Unutma Eğrisi <span class="sub">yaş × canlılık</span></h3>${scatter}
+        <div class="card"><h3>${ico('analytics', 15)} Önem Skoru Dağılımı <span class="sub">1–10</span></h3>${hist}</div>
+        <div class="card"><h3>${ico('activity', 15)} Unutma Eğrisi <span class="sub">yaş × canlılık</span></h3>${scatter}
           <div class="muted small" style="margin-top:6px">Kesikli çizgi: önem=10 için teorik Ebbinghaus eğrisi (0.99<sup>gün</sup>).</div>
         </div>
       </div>
 
-      <div class="card"><h3>📈 Kayıt Hızı <span class="sub">son 90 gün, günlük</span></h3>${areaSVG(weekly)}
+      <div class="card"><h3>${ico('trending', 15)} Kayıt Hızı <span class="sub">son 90 gün, günlük</span></h3>${areaSVG(weekly)}
         <div class="grid cols-4" style="margin-top:14px">
           ${kpiStat('Son 7 gün', mem.filter(m => daysOld(m.created_at) <= 7).length)}
           ${kpiStat('Son 30 gün', mem.filter(m => daysOld(m.created_at) <= 30).length)}
@@ -890,9 +920,9 @@
 
     c.innerHTML = viewShell('Hatırlatmalar & Sağlık', 'Önemli ama unutulmaya yüz tutmuş anılar ve sistem durumu', '') + health + `
       <div class="card">
-        <h3>🔔 Hatırlatılması Gerekenler <span class="sub">önem × unutulma skoruna göre</span></h3>
+        <h3>${ico('bell', 15)} Hatırlatılması Gerekenler <span class="sub">önem × unutulma skoruna göre</span></h3>
         ${rem.length ? `<div class="mem-list">${rem.map(r => reminderCard(r)).join('')}</div>`
-          : emptyHTML('Harika — bekleyen hatırlatma yok.', '✅')}
+          : emptyHTML('Harika — bekleyen hatırlatma yok.', 'checkCircle')}
         <div class="muted small" style="margin-top:14px;line-height:1.6">
           Skor = önem − (önem × 0.99<sup>gün</sup>). Uzun süre erişilmeyen yüksek önemli anılar öne çıkar (Ebbinghaus unutma eğrisi).
           ${state.reminders ? '' : 'Kesin erişim sayaçları için opsiyonel /api/reminders uç noktasını etkinleştirebilirsin.'}
@@ -906,9 +936,9 @@
     const fs = r.forgotten_score != null ? r.forgotten_score : r.forgotten;
     return `<div class="mem-item" style="border-left-color:${meta.color}" data-mem-id="${esc(r.id)}">
       <div class="mi-top">
-        <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+        <span class="badge room" style="border-color:${meta.color}">${ico(meta.ico, 13)} ${esc(meta.label)}</span>
         <span class="mi-title">${esc(r.konu)}</span>
-        <span class="imp" style="margin-left:auto">🔔 ${Number(fs).toFixed(1)}</span>
+        <span class="imp" style="margin-left:auto">${ico('bell', 12)} ${Number(fs).toFixed(1)}</span>
       </div>
       <div class="mi-body">${esc((r.bilgi || r.content || '').slice(0, 200))}</div>
       <div class="mi-foot"><span>önem ${Number(r.importance).toFixed(0)}/10</span><span>·</span><span>${r.days_ago != null ? r.days_ago + ' gün önce' : esc(ago(r.created_at))}</span></div>
@@ -918,7 +948,7 @@
     const meta = roomMeta(r.oda);
     return `<div class="mem-item" style="margin-bottom:8px;border-left-color:${meta.color}" onclick="navigate('reminders')">
       <div class="mi-top"><span class="mi-title" style="font-size:.84rem">${esc(r.konu)}</span>
-      <span class="imp" style="margin-left:auto;font-size:.72rem">🔔 ${Number(r.forgotten_score ?? r.forgotten ?? 0).toFixed(1)}</span></div>
+      <span class="imp" style="margin-left:auto;font-size:.72rem">${ico('bell', 11)} ${Number(r.forgotten_score ?? r.forgotten ?? 0).toFixed(1)}</span></div>
       <div class="mi-foot">${esc(meta.label)} · ${r.days_ago != null ? r.days_ago + ' gün' : esc(ago(r.created_at))}</div>
     </div>`;
   }
@@ -927,17 +957,17 @@
   function memItem(m) {
     const meta = roomMeta(m.oda);
     const score = m._score != null ? `<span class="sr-score">%${(m._score * 100).toFixed(0)}</span>` : '';
-    const wingBadge = m.kanat && m.kanat !== 'genel' ? `<span class="badge wing" title="Kanat (Wing)">🪽 ${esc(m.kanat)}</span>` : '';
-    const closetBadge = m.dolap && m.dolap !== 'genel' ? `<span class="badge closet" title="Dolap (Closet)">🗄️ ${esc(m.dolap)}</span>` : '';
+    const wingBadge = m.kanat && m.kanat !== 'genel' ? `<span class="badge wing" title="Kanat (Wing)">${ico('feather', 12)} ${esc(m.kanat)}</span>` : '';
+    const closetBadge = m.dolap && m.dolap !== 'genel' ? `<span class="badge closet" title="Dolap (Closet)">${ico('archive', 12)} ${esc(m.dolap)}</span>` : '';
     return `<div class="mem-item" style="border-left-color:${meta.color}" data-mem-id="${esc(m.id)}">
       <div class="mi-top">
         <div class="mempalace-badge-row">
-          <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+          <span class="badge room" style="border-color:${meta.color}">${ico(meta.ico, 13)} ${esc(meta.label)}</span>
           ${wingBadge}
           ${closetBadge}
         </div>
         <span class="mi-title">${esc(m.konu)}</span>
-        <span class="imp" style="margin-left:auto">★ ${Number(m.importance).toFixed(0)}</span>${score}
+        <span class="imp" style="margin-left:auto">${ico('star', 12)} ${Number(m.importance).toFixed(0)}</span>${score}
       </div>
       <div class="mi-body">${esc((m.bilgi || '').slice(0, 220))}</div>
       <div class="mi-foot">
@@ -975,7 +1005,7 @@
       <div class="modal-head">
         <div>
           <h2>${esc(m.konu)}</h2>
-          <div class="muted small" style="margin-top:4px">📅 ${esc(fmtDateTime(m.created_at))} (${esc(ago(m.created_at))})</div>
+          <div class="muted small" style="margin-top:4px">${ico('calendar', 13)} ${esc(fmtDateTime(m.created_at))} (${esc(ago(m.created_at))})</div>
         </div>
         <span class="modal-close" onclick="closeModal()">✕</span>
       </div>
@@ -983,28 +1013,28 @@
         <span style="font-size: .75rem; color: var(--text-faint); margin-right: 4px;">ZİHİN SARAYI:</span>
         <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
         <span class="mempalace-sep">›</span>
-        <span class="badge wing">🪽 Kanat: ${esc(m.kanat || 'genel')}</span>
+        <span class="badge wing">${ico('feather', 12)} Kanat: ${esc(m.kanat || 'genel')}</span>
         <span class="mempalace-sep">›</span>
-        <span class="badge closet">🗄️ Dolap: ${esc(m.dolap || 'genel')}</span>
+        <span class="badge closet">${ico('archive', 12)} Dolap: ${esc(m.dolap || 'genel')}</span>
         <span style="margin-left:auto;">${(m.agent_id && m.agent_id !== 'user')
           ? `<span class="badge" style="border-color:var(--violet);color:var(--violet);">🤖 Ajan: ${esc(m.agent_id)}</span>`
           : `<span class="badge" style="border-color:var(--teal);color:var(--teal);">👤 Kullanıcı</span>`}
         </span>
       </div>
       <div class="meta-grid">
-        <div class="mg"><label>Önem</label><b style="color:var(--amber)">★ ${Number(m.importance).toFixed(1)}</b></div>
+        <div class="mg"><label>Önem</label><b style="color:var(--amber)">${ico('star', 13)} ${Number(m.importance).toFixed(1)}</b></div>
         <div class="mg"><label>Canlılık</label><b style="color:var(--cyan)">${liveness(m).toFixed(2)}</b></div>
         <div class="mg"><label>Yaş</label><b>${esc(ago(m.created_at))}</b></div>
         <div class="mg"><label>Bağlantı</label><b>${related.length}</b></div>
       </div>
       <div style="margin-bottom:8px">${(m.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
       <div class="detail-body">${formatBody(m.bilgi)}</div>
-      ${related.length ? `<h3 style="margin:20px 0 10px">🔗 İlişkili Anılar</h3>
+      ${related.length ? `<h3 style="margin:20px 0 10px">${ico('link', 15)} İlişkili Anılar</h3>
         <div class="mem-list">${related.slice(0, 6).map(r => memItem(r)).join('')}</div>` : ''}
       <div style="display:flex;gap:10px;margin-top:22px">
-        <button class="btn" onclick="navigate('graph')">🕸️ Grafikte gör</button>
-        <button class="btn" style="border-color:var(--amber);color:var(--amber)" onclick="archiveMemory('${esc(m.id)}')">🗄️ Arşivle</button>
-        <button class="btn" style="border-color:var(--red);color:var(--red)" onclick="deleteMemory('${esc(m.id)}')">🗑️ Kalıcı Sil</button>
+        <button class="btn" onclick="navigate('graph')">${ico('graph', 15)} Grafikte gör</button>
+        <button class="btn" style="border-color:var(--amber);color:var(--amber)" onclick="archiveMemory('${esc(m.id)}')">${ico('archive', 15)} Arşivle</button>
+        <button class="btn" style="border-color:var(--red);color:var(--red)" onclick="deleteMemory('${esc(m.id)}')">${ico('trash', 15)} Kalıcı Sil</button>
       </div>`;
     $('#overlay').classList.remove('hidden');
     bindMemItems($('#modal'));
@@ -1028,11 +1058,11 @@
   /* ─────────────────────────── ADD MEMORY ─────────────────────────── */
   function openAddForm() {
     const roomOpts = ['otomatik', ...Object.keys(ROOM_META)].map(k =>
-      `<option value="${k === 'otomatik' ? '' : k}">${k === 'otomatik' ? '⚡ Otomatik belirle (Ollama)' : ROOM_META[k].icon + ' ' + ROOM_META[k].label}</option>`).join('');
+      `<option value="${k === 'otomatik' ? '' : k}">${k === 'otomatik' ? 'Otomatik belirle (Ollama)' : ROOM_META[k].label}</option>`).join('');
     $('#modal').innerHTML = `
       <div class="modal-head">
         <div>
-          <h2>+ Yeni Anı Ekle</h2>
+          <h2>${ico('plus', 18)} Yeni Anı Ekle</h2>
           <div class="muted small" id="addModalSubtitle" style="margin-top:4px">Zihin Sarayı'na hızlı ve doğrudan kayıt (0 MB VRAM)</div>
         </div>
         <span class="modal-close" onclick="closeModal()">✕</span>
@@ -1056,7 +1086,7 @@
         <div class="form-row">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <label style="margin:0">Önem Skoru</label>
-            <b id="fImpVal" style="color:var(--amber);font-family:var(--mono);">★ 7/10</b>
+            <b id="fImpVal" style="color:var(--amber);font-family:var(--mono);">${ico('star', 13)} 7/10</b>
           </div>
           <input type="range" id="fImp" min="1" max="10" value="7" style="width:100%" />
         </div>
@@ -1065,22 +1095,22 @@
       <!-- GELİŞMİŞ ZİHİN SARAYI VE ZAMAN SEÇENEKLERİ -->
       <div class="adv-panel" id="advPanel">
         <div class="adv-header" id="advToggle">
-          <span>🏛️ Zihin Sarayı Konumu & Özel Zaman (Gelişmiş)</span>
+          <span>${ico('landmark', 14)} Zihin Sarayı Konumu & Özel Zaman (Gelişmiş)</span>
           <span class="adv-toggle-icon">▼</span>
         </div>
         <div class="adv-content" id="advContent">
           <div class="grid cols-2" style="margin-bottom:12px;">
             <div class="form-row">
-              <label>🪽 Kanat (Wing - Opsiyonel)</label>
+              <label>${ico('feather', 12)} Kanat (Wing - Opsiyonel)</label>
               <input type="text" class="field" id="fKanat" placeholder="Örn: Ağ ve Güvenlik, Frontend, Distro..." />
             </div>
             <div class="form-row">
-              <label>🗄️ Dolap (Closet - Opsiyonel)</label>
+              <label>${ico('archive', 12)} Dolap (Closet - Opsiyonel)</label>
               <input type="text" class="field" id="fDolap" placeholder="Örn: FastMCP, Flake, Hyprland..." />
             </div>
           </div>
           <div class="form-row">
-            <label>📅 Özel Kayıt Zamanı (Geçmiş / Tarih Damgası)</label>
+            <label>${ico('calendar', 12)} Özel Kayıt Zamanı (Geçmiş / Tarih Damgası)</label>
             <div style="display:flex; gap:8px;">
               <input type="datetime-local" class="field" id="fTarih" style="flex:1" />
               <button type="button" class="btn ghost small" id="fResetDate" title="Şimdiki zamana sıfırla">Şimdi</button>
@@ -1094,7 +1124,7 @@
       <div class="form-row" style="background:var(--surface);padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;">
         <div>
           <div style="font-weight:600;font-size:.85rem;display:flex;align-items:center;gap:8px;">
-            <span>🤖 Ollama AI Analizi</span>
+            <span>${ico('bot', 14)} Ollama AI Analizi</span>
             <span class="badge" id="aiModeBadge" style="font-size:.68rem;padding:2px 8px;background:var(--surface-hover);color:var(--text-dim);border:1px solid var(--border);">Hızlı (0 MB VRAM)</span>
           </div>
           <div class="muted small" id="aiModeDesc" style="margin-top:3px;font-size:.75rem;">Model VRAM'e yüklenmez, anı 10ms içinde anında kaydedilir.</div>
@@ -1106,7 +1136,7 @@
       </div>
 
       <div style="display:flex;gap:12px;margin-top:14px">
-        <button class="btn primary" id="fSave" style="flex:1;justify-content:center;">💾 Hafızaya İşle</button>
+        <button class="btn primary" id="fSave" style="flex:1;justify-content:center;">${ico('save', 16)} Hafızaya İşle</button>
         <button class="btn ghost" onclick="closeModal()">İptal</button>
       </div>`;
 
@@ -1151,7 +1181,7 @@
       };
     }
 
-    $('#fImp').oninput = e => $('#fImpVal').textContent = '★ ' + e.target.value + '/10';
+    $('#fImp').oninput = e => $('#fImpVal').innerHTML = ico('star', 13) + ' ' + e.target.value + '/10';
 
     $('#fSave').onclick = async () => {
       const konu = $('#fKonu').value.trim(), bilgi = $('#fBilgi').value.trim();
@@ -1171,7 +1201,7 @@
         use_ai: useAi
       };
 
-      $('#fSave').textContent = useAi ? 'Ollama işliyor…' : 'Kaydediliyor…';
+      $('#fSave').innerHTML = ico('loader', 16, 'spin') + ' ' + (useAi ? 'Ollama işliyor…' : 'Kaydediliyor…');
       $('#fSave').disabled = true;
       const r = await api('/api/memory', {
         method: 'POST',
@@ -1198,7 +1228,7 @@
         }
       } else {
         toast('Kaydetme başarısız — sunucu veya Ollama durumunu kontrol edin.', 'err');
-        $('#fSave').textContent = '💾 Hafızaya İşle';
+        $('#fSave').innerHTML = ico('save', 16) + ' Hafızaya İşle';
         $('#fSave').disabled = false;
       }
     };
@@ -1214,7 +1244,7 @@
       if (!res || !res.length) { box.innerHTML = '<div class="sr-item muted">sonuç yok</div>'; box.classList.remove('hidden'); return; }
       box.innerHTML = res.map(r => `
         <div class="sr-item" data-mem-id="${esc(r.id)}">
-          <div class="sr-top"><span class="badge room" style="border-color:${roomMeta(r.oda).color}">${roomMeta(r.oda).icon} ${esc(roomMeta(r.oda).label)}</span>
+          <div class="sr-top"><span class="badge room" style="border-color:${roomMeta(r.oda).color}">${ico(roomMeta(r.oda).ico, 12)} ${esc(roomMeta(r.oda).label)}</span>
             <span>${esc(r.konu)}</span><span class="sr-score">%${((r.score || 0) * 100).toFixed(0)}</span></div>
           <div class="sr-body">${esc((r.content || '').slice(0, 160))}</div>
         </div>`).join('');
@@ -1399,29 +1429,29 @@
   async function viewArchive(c) {
     c.innerHTML = loadingHTML();
     const arc = await api('/api/memory/archived') || [];
-    if (!arc.length) { c.innerHTML = viewShell('Arşiv', 'Gizlenmiş anılar', '', emptyHTML('Arşivde hiç anı yok.', '📦')); return; }
+    if (!arc.length) { c.innerHTML = viewShell('Arşiv', 'Gizlenmiş anılar', '', emptyHTML('Arşivde hiç anı yok.', 'archive')); return; }
     
     const list = arc.map(m => {
       const meta = roomMeta(m.oda);
-      const wingBadge = m.kanat && m.kanat !== 'genel' ? `<span class="badge wing">🪽 ${esc(m.kanat)}</span>` : '';
-      const closetBadge = m.dolap && m.dolap !== 'genel' ? `<span class="badge closet">🗄️ ${esc(m.dolap)}</span>` : '';
+      const wingBadge = m.kanat && m.kanat !== 'genel' ? `<span class="badge wing">${ico('feather', 12)} ${esc(m.kanat)}</span>` : '';
+      const closetBadge = m.dolap && m.dolap !== 'genel' ? `<span class="badge closet">${ico('archive', 12)} ${esc(m.dolap)}</span>` : '';
       return `
         <div class="mem-item" style="border-left-color:var(--text-dim)">
           <div class="mi-top">
             <div class="mempalace-badge-row">
-              <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
+              <span class="badge room" style="border-color:${meta.color}">${ico(meta.ico, 13)} ${esc(meta.label)}</span>
               ${wingBadge}
               ${closetBadge}
             </div>
             <span class="mi-title" style="color:var(--text-dim)">${esc(m.konu)}</span>
-            <span class="imp" style="margin-left:auto">★ ${Number(m.importance).toFixed(0)}</span>
+            <span class="imp" style="margin-left:auto">${ico('star', 12)} ${Number(m.importance).toFixed(0)}</span>
           </div>
           <div class="mi-body">${esc((m.content || '').slice(0, 180))}...</div>
           <div class="mi-foot">
-            <span>📅 ${esc(fmtDateTime(m.created_at))}</span>
+            <span>${ico('calendar', 12)} ${esc(fmtDateTime(m.created_at))}</span>
             <div style="margin-left:auto; display:flex; gap:8px;">
-              <button class="btn ghost small" onclick="unarchiveMemory('${esc(m.id)}')">↩ Geri Al</button>
-              <button class="btn ghost small" style="color:var(--red);border-color:var(--red)" onclick="deleteMemory('${esc(m.id)}')">🗑️ Kalıcı Sil</button>
+              <button class="btn ghost small" onclick="unarchiveMemory('${esc(m.id)}')">${ico('undo', 13)} Geri Al</button>
+              <button class="btn ghost small" style="color:var(--red);border-color:var(--red)" onclick="deleteMemory('${esc(m.id)}')">${ico('trash', 13)} Kalıcı Sil</button>
             </div>
           </div>
         </div>
@@ -1436,7 +1466,7 @@
     if (state.graphError) { c.innerHTML = errorHTML(); return; }
     renderRoomNav();
     c.innerHTML = viewShell('Ayarlar', 'Zihin Sarayı Yapılandırması ve Ollama Modelleri', '') +
-      '<div class="loading-full"><div class="spinner"></div><div class="muted small" style="margin-top:10px">Ollama modelleri ve sistem yapılandırması alınıyor…</div></div>';
+      `<div class="grid cols-2" style="margin-top:6px">${skelPanel(6)}${skelPanel(5)}</div>`;
 
     const res = await api('/api/settings');
     if (!res || !res.config) {
@@ -1476,54 +1506,54 @@
         <!-- LLM MODELLERİ -->
         <div class="card">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <h3 style="margin:0">🤖 Yapay Zeka (Ollama) Modelleri</h3>
+            <h3 style="margin:0">${ico('bot', 15)} Yapay Zeka (Ollama) Modelleri</h3>
             <span class="badge" style="border-color:${avail.length ? 'var(--cyan)' : 'var(--red)'};color:${avail.length ? 'var(--cyan)' : 'var(--red)'}">
               ${avail.length ? `● ${avail.length} model kurulu` : '○ Ollama kapalı'}
             </span>
           </div>
 
           <div class="form-row">
-            <label>⚡ Hızlı Model (Oda Sınıflandırma, Tag Üretimi)</label>
+            <label>${ico('zap', 12)} Hızlı Model (Oda Sınıflandırma, Tag Üretimi)</label>
             <div style="display:flex;gap:8px;">
               <select class="field" id="cfgFastModel" style="flex:1;">
                 ${modelOpts(cfg.fast_model)}
               </select>
-              <button class="btn ghost small" id="btnTestFast" title="Modeli Test Et">⚡ Test</button>
+              <button class="btn ghost small" id="btnTestFast" title="Modeli Test Et">${ico('zap', 13)} Test</button>
             </div>
             <div id="testResFast" style="margin-top:4px;"></div>
           </div>
 
           <div class="form-row" style="margin-top:14px;">
-            <label>🧠 Zeki Model (Upsert Kararı, Varlık/İlişki Çıkarımı)</label>
+            <label>${ico('brain', 12)} Zeki Model (Upsert Kararı, Varlık/İlişki Çıkarımı)</label>
             <div style="display:flex;gap:8px;">
               <select class="field" id="cfgSmartModel" style="flex:1;">
                 ${modelOpts(cfg.smart_model)}
               </select>
-              <button class="btn ghost small" id="btnTestSmart" title="Modeli Test Et">⚡ Test</button>
+              <button class="btn ghost small" id="btnTestSmart" title="Modeli Test Et">${ico('zap', 13)} Test</button>
             </div>
             <div id="testResSmart" style="margin-top:4px;"></div>
           </div>
 
           <div class="form-row" style="margin-top:14px;">
-            <label>💬 Konuşma / Özet Modeli (Multilingual)</label>
+            <label>${ico('message', 12)} Konuşma / Özet Modeli (Multilingual)</label>
             <div style="display:flex;gap:8px;">
               <select class="field" id="cfgConvModel" style="flex:1;">
                 ${modelOpts(cfg.conv_model)}
               </select>
-              <button class="btn ghost small" id="btnTestConv" title="Modeli Test Et">⚡ Test</button>
+              <button class="btn ghost small" id="btnTestConv" title="Modeli Test Et">${ico('zap', 13)} Test</button>
             </div>
             <div id="testResConv" style="margin-top:4px;"></div>
           </div>
 
           <div class="form-row" style="margin-top:14px;">
-            <label>🌐 Ollama API Adresi</label>
+            <label>${ico('globe', 12)} Ollama API Adresi</label>
             <input type="text" class="field" id="cfgOllamaBase" value="${esc(cfg.ollama_base || 'http://localhost:11434')}" />
           </div>
         </div>
 
         <!-- HAFIZA & EBBINGHAUS AYARLARI -->
         <div class="card">
-          <h3 style="margin-bottom:14px">📉 Ebbinghaus Unutma Eğrisi & Hafıza Politikası</h3>
+          <h3 style="margin-bottom:14px">${ico('activity', 15)} Ebbinghaus Unutma Eğrisi & Hafıza Politikası</h3>
 
           <div class="form-row">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -1537,7 +1567,7 @@
           </div>
 
           <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
-            <h4 style="margin-bottom:10px;font-size:.85rem;color:var(--text)">🛡️ Akıllı Çakışma ve Arşivleme Politikası</h4>
+            <h4 style="margin-bottom:10px;font-size:.85rem;color:var(--text)">${ico('shieldCheck', 13)} Akıllı Çakışma ve Arşivleme Politikası</h4>
             <label class="switch">
               <input type="checkbox" id="chkAutoArchive" ${cfg.auto_archive_conflicts !== false ? 'checked' : ''} />
               <span class="track"></span>
@@ -1550,7 +1580,7 @@
 
           <div style="margin-top:24px;display:flex;gap:12px;">
             <button class="btn primary" id="btnSaveSettings" style="flex:1;justify-content:center;">
-              💾 Ayarları Kaydet ve Uygula
+              ${ico('save', 16)} Ayarları Kaydet ve Uygula
             </button>
           </div>
         </div>
@@ -1577,7 +1607,7 @@
         const model = sel.value;
         if (!model) { toast('Model seçilmedi', 'err'); return; }
         btn.disabled = true;
-        btn.textContent = '⏳';
+        btn.innerHTML = ico('loader', 14, 'spin');
         res.innerHTML = '<span class="muted small">Ollama test ediliyor…</span>';
         const r = await api('/api/settings/test-model', {
           method: 'POST',
@@ -1585,11 +1615,11 @@
           body: JSON.stringify({ model })
         });
         btn.disabled = false;
-        btn.textContent = '⚡ Test';
+        btn.innerHTML = ico('zap', 13) + ' Test';
         if (r && r.ok) {
-          res.innerHTML = `<span class="badge" style="border-color:var(--green);color:var(--green);font-size:.7rem">✓ ${r.duration_ms}ms · Model hazır</span>`;
+          res.innerHTML = `<span class="badge" style="border-color:var(--green);color:var(--green);font-size:.7rem">${ico('check', 12)} ${r.duration_ms}ms · Model hazır</span>`;
         } else {
-          res.innerHTML = `<span class="badge" style="border-color:var(--red);color:var(--red);font-size:.7rem">✗ Hata: ${esc((r && r.error) || 'Bağlantı hatası')}</span>`;
+          res.innerHTML = `<span class="badge" style="border-color:var(--red);color:var(--red);font-size:.7rem">${ico('circleX', 12)} Hata: ${esc((r && r.error) || 'Bağlantı hatası')}</span>`;
         }
       };
     };
@@ -1619,12 +1649,12 @@
           body: JSON.stringify(payload)
         });
         btnSave.disabled = false;
-        btnSave.textContent = '💾 Ayarları Kaydet ve Uygula';
+        btnSave.innerHTML = ico('save', 16) + ' Ayarları Kaydet ve Uygula';
 
         if (upd && upd.status === 'ok') {
           DECAY = payload.decay_factor;
           state.config = upd.config;
-          toast('✅ Ayarlar başarıyla kaydedildi ve tüm sistemde uygulandı.', 'ok');
+          toast('Ayarlar başarıyla kaydedildi ve tüm sistemde uygulandı.', 'ok');
           loadHeader();
         } else {
           toast('Ayarlar kaydedilemedi.', 'err');
@@ -1633,27 +1663,215 @@
     }
   }
 
+  /* ─────────────────────────── VIEW TRANSITIONS ─────────────────────────── */
+  const prefersReduced = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function canViewTransition() { return typeof document.startViewTransition === 'function' && !prefersReduced(); }
+  /* apply() DOM'u değiştirir. Döndürdüğü Promise çözülene kadar yeni kare alınmaz;
+     böylece ara "yükleniyor" durumları animasyona sızmaz. */
+  function withTransition(apply) {
+    if (!canViewTransition()) { try { return Promise.resolve(apply()); } catch (_) { return Promise.resolve(); } }
+    try {
+      const t = document.startViewTransition(() => apply());
+      return (t && t.finished ? t.finished : Promise.resolve()).catch(() => {});
+    } catch (_) { try { return Promise.resolve(apply()); } catch (e) { return Promise.resolve(); } }
+  }
+
   /* ─────────────────────────── THEME ─────────────────────────── */
-  function initTheme() {
-    const saved = localStorage.getItem('lm-theme');
-    if (saved) document.documentElement.dataset.theme = saved;
-    $('#themeToggle').onclick = () => {
-      const cur = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-      document.documentElement.dataset.theme = cur;
-      localStorage.setItem('lm-theme', cur);
+  function syncThemeIcon() {
+    const btn = $('#themeToggle');
+    if (btn) btn.innerHTML = ico(document.documentElement.dataset.theme === 'light' ? 'sun' : 'moon', 17);
+  }
+  function toggleTheme() {
+    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    const apply = () => {
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem('lm-theme', next); } catch (_) {}
+      syncThemeIcon();
     };
+    if (canViewTransition()) document.startViewTransition(apply); else apply();
+  }
+  function initTheme() {
+    try { const saved = localStorage.getItem('lm-theme'); if (saved) document.documentElement.dataset.theme = saved; } catch (_) {}
+    syncThemeIcon();
+    $('#themeToggle').onclick = toggleTheme;
+  }
+
+  async function reloadAll() {
+    state.loadedAt = 0;
+    await loadCore(true); await loadHeader(); await router();
+    toast('Veriler yenilendi.', 'ok');
+  }
+
+  /* ─────────────────────────── KOMUT PALETİ (⌘K) ─────────────────────────── */
+  let cmdk = { open() {}, close() {}, isOpen() { return false; } };
+
+  function initCommandPalette() {
+    const root = $('#cmdk'), input = $('#cmdkInput'), list = $('#cmdkList');
+    if (!root || !input || !list) return;
+
+    let opened = false, shown = [], active = 0, token = 0;
+
+    const VIEWS = [
+      ['overview', 'Genel Bakış', 'Panele dön', 'home'],
+      ['graph', 'Bilgi Grafiği', 'Anılar ve kavramlar ağı', 'graph'],
+      ['rooms', 'Odalar', 'Otomatik sınıflandırılmış odalar', 'rooms'],
+      ['timeline', 'Zaman Çizelgesi', 'Zamana yayılmış anılar', 'timeline'],
+      ['analytics', 'Analitik', 'Sayısal görünüm', 'analytics'],
+      ['reminders', 'Hatırlatmalar', 'Unutulmaya yüz tutan anılar', 'bell'],
+      ['archive', 'Arşiv', 'Gizlenmiş anılar', 'archive'],
+      ['settings', 'Ayarlar', 'Model ve hafıza politikası', 'settings'],
+    ];
+
+    function buildCommands() {
+      const out = VIEWS.map(([v, t, s, i]) => ({ group: 'Git', title: t, sub: s, ico: i, run: () => navigate(v) }));
+      for (const r of state.rooms) out.push({ group: 'Odalar', title: r.label, sub: r.count + ' anı', ico: r.ico, run: () => navigate('room', r.key) });
+      const dark = document.documentElement.dataset.theme !== 'light';
+      out.push({ group: 'Aksiyonlar', title: 'Yeni anı ekle', sub: 'Hafızaya kayıt', ico: 'plus', kbd: 'N', run: openAddForm });
+      out.push({ group: 'Aksiyonlar', title: 'Temayı değiştir', sub: dark ? 'Açık temaya geç' : 'Koyu temaya geç', ico: dark ? 'sun' : 'moon', run: toggleTheme });
+      out.push({ group: 'Aksiyonlar', title: 'Verileri yenile', sub: 'Sunucudan yeniden çek', ico: 'refresh', run: reloadAll });
+      return out;
+    }
+
+    const norm = (s) => (s || '').toLocaleLowerCase('tr');
+    function fuzzy(hay, needle) {
+      hay = norm(hay); needle = norm(needle);
+      if (!needle) return 0;
+      const idx = hay.indexOf(needle);
+      if (idx >= 0) return 1000 - idx * 5 - hay.length;   // tam alt-dizi öncelikli
+      let hi = 0, score = 0;                              // gevşek (subsequence) eşleşme
+      for (const ch of needle) {
+        const at = hay.indexOf(ch, hi);
+        if (at < 0) return -1;
+        score += Math.max(1, 10 - (at - hi));
+        hi = at + 1;
+      }
+      return score;
+    }
+
+    function filterCommands(q) {
+      return buildCommands()
+        .map(c => ({ ...c, _s: fuzzy(c.title + ' ' + c.sub, q) }))
+        .filter(c => c._s >= 0)
+        .sort((a, b) => b._s - a._s)
+        .slice(0, q ? 8 : 11);
+    }
+
+    function paint() {
+      if (!shown.length) { list.innerHTML = '<div class="cmdk-empty">Sonuç bulunamadı.</div>'; return; }
+      if (active >= shown.length) active = 0;
+      if (active < 0) active = shown.length - 1;
+      let html = '', last = '';
+      shown.forEach((it, i) => {
+        if (it.group !== last) { html += `<div class="cmdk-group">${esc(it.group)}</div>`; last = it.group; }
+        html += `<div class="cmdk-item${i === active ? ' active' : ''}" data-i="${i}" role="option" aria-selected="${i === active}">
+            ${ico(it.ico || 'circle', 16)}
+            <span class="cmdk-label">${esc(it.title)}</span>
+            ${it.sub ? `<span class="cmdk-sub">${esc(it.sub)}</span>` : ''}
+            <span class="cmdk-tail">${it.score != null ? `<span class="sr-score">%${Math.round(it.score * 100)}</span>` : ''}${it.kbd ? `<span class="kbd">${esc(it.kbd)}</span>` : ''}</span>
+          </div>`;
+      });
+      list.innerHTML = html;
+      const act = list.querySelector('.cmdk-item.active');
+      if (act) act.scrollIntoView({ block: 'nearest' });
+    }
+
+    function refresh(withMemories) {
+      const q = input.value.trim();
+      shown = filterCommands(q);
+      active = 0;
+      paint();
+      if (withMemories && q.length >= 2) {
+        const my = ++token;
+        api(`/api/search?q=${encodeURIComponent(q)}&n=6`).then(res => {
+          if (my !== token || !opened) return;
+          const mem = (res || []).map(r => ({
+            group: 'Anılar', title: r.konu, sub: (r.content || '').slice(0, 90),
+            ico: roomMeta(r.oda).ico, score: r.score,
+            run: () => {
+              if (!state.memories.find(m => m.id === r.id)) openTransientMemory(r.id, res);
+              else openMemoryById(r.id);
+            },
+          }));
+          shown = [...filterCommands(q).slice(0, 6), ...mem];
+          active = 0;
+          paint();
+        });
+      }
+    }
+
+    function run(i) {
+      const it = shown[i];
+      if (!it || typeof it.run !== 'function') return;
+      close();
+      setTimeout(() => { try { it.run(); } catch (_) {} }, 0);
+    }
+    function open() {
+      if (opened) return;
+      opened = true;
+      root.classList.remove('hidden');
+      input.value = '';
+      shown = []; active = 0;
+      refresh(false);
+      setTimeout(() => input.focus(), 10);
+    }
+    function close() {
+      if (!opened) return;
+      opened = false;
+      root.classList.add('hidden');
+      token++;
+    }
+
+    input.addEventListener('input', () => refresh(true));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); active++; if (active >= shown.length) active = 0; paint(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); active--; if (active < 0) active = shown.length - 1; paint(); }
+      else if (e.key === 'Home') { e.preventDefault(); active = 0; paint(); }
+      else if (e.key === 'End') { e.preventDefault(); active = shown.length - 1; paint(); }
+      else if (e.key === 'Enter') { e.preventDefault(); run(active); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    list.addEventListener('click', (e) => {
+      const el = e.target.closest('.cmdk-item'); if (!el) return;
+      run(Number(el.dataset.i));
+    });
+    list.addEventListener('mousemove', (e) => {
+      const el = e.target.closest('.cmdk-item'); if (!el) return;
+      const i = Number(el.dataset.i);
+      if (i !== active) { active = i; paint(); }
+    });
+    root.querySelectorAll('[data-cmdk-close]').forEach(el => el.addEventListener('click', close));
+
+    cmdk = { open, close, isOpen: () => opened };
+  }
+
+  /* ─────────────────────────── KISAYOLLAR ─────────────────────────── */
+  function initShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      const ae = document.activeElement;
+      const tag = (ae && ae.tagName) || '';
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(tag) || !!(ae && ae.isContentEditable);
+
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); cmdk.open(); return; }
+      if (e.key === 'Escape') { if (cmdk.isOpen()) { cmdk.close(); return; } closeModal(); return; }
+      if (typing) return;
+      if (e.key === '/') { const gs = $('#globalSearch'); if (gs) { e.preventDefault(); gs.focus(); } return; }
+      if ((e.key === 'n' || e.key === 'N') && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); openAddForm(); }
+    });
   }
 
   /* ─────────────────────────── INIT ─────────────────────────── */
   async function init() {
     initTheme();
+    if (typeof window.hydrateIcons === 'function') window.hydrateIcons();
     initParticles();
     initSearch();
     initSSE();
+    initCommandPalette();
+    initShortcuts();
     $('#menuToggle').onclick = () => $('#sidebar').classList.toggle('open');
     $('#addBtn').onclick = openAddForm;
+    const cmdkBtn = $('#cmdkOpen'); if (cmdkBtn) cmdkBtn.onclick = () => cmdk.open();
     $('#overlay').onclick = (e) => { if (e.target.id === 'overlay') closeModal(); };
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
     $$('.nav-link').forEach(a => {
       a.onclick = (e) => {
