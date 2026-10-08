@@ -19,6 +19,7 @@ os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 import ctypes
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -41,11 +42,26 @@ async def lifespan(app: FastAPI):
     global manager
     from core.memory_manager import MemoryManager
     manager = MemoryManager()
-    log.info(f"🧠 Localmind v2 başladı — {manager.collection.count()} anı yüklü")
+    counts = manager.get_memory_counts()
+    log.info(f"🧠 Localmind v2 başladı — {counts['active']} aktif anı ({counts['total']} toplam) yüklü")
     yield
     log.info("Localmind kapatılıyor...")
 
 app = FastAPI(title="Localmind v2", version="2.0.0", lifespan=lifespan)
+
+# Güvenlik: Yalnızca yerel dashboard ve araçların erişimine izin ver (Drive-by ve DNS Rebinding koruması)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ─────────────────────────────────────────────────────────
 # REQUEST MODELLERİ
@@ -84,10 +100,14 @@ class TestModelRequest(BaseModel):
 async def health():
     from core.intelligence import is_ollama_available
     ollama_ok = await is_ollama_available()
+    counts = manager.get_memory_counts() if manager else {"active": 0, "archived": 0, "total": 0}
     return {
         "status": "ok",
         "version": "2.0.0",
-        "memories": manager.collection.count() if manager else 0,
+        "memories": counts["active"],
+        "active_memories": counts["active"],
+        "archived_memories": counts["archived"],
+        "total_documents": counts["total"],
         "ollama": ollama_ok,
         "timestamp": datetime.now().astimezone().isoformat()
     }
@@ -142,6 +162,7 @@ async def all_memories(include_archived: bool = False):
             "tags": m.tags,
             "created_at": m.created_at,
             "updated_at": m.updated_at,
+            "agent_id": m.agent_id,
             "archived": m.archived
         }
         for m in memories
@@ -266,8 +287,14 @@ async def events(request: Request):
             while True:
                 if await request.is_disconnected():
                     break
-                total = manager.collection.count() if manager else 0
-                data = json.dumps({"type": "pulse", "total": total, "tick": count})
+                counts = manager.get_memory_counts() if manager else {"active": 0, "archived": 0, "total": 0}
+                data = json.dumps({
+                    "type": "pulse",
+                    "total": counts["active"],
+                    "active": counts["active"],
+                    "archived": counts["archived"],
+                    "tick": count
+                })
                 yield f"data: {data}\n\n"
                 count += 1
                 await asyncio.sleep(5)

@@ -49,6 +49,24 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
+  function formatBody(raw) {
+    if (!raw) return '';
+    const safe = esc(raw);
+    const withCodeBlocks = safe.replace(/```(?:[a-zA-Z0-9_\-]+)?\n?([\s\S]*?)```/g, (_, code) => {
+      return `<div class="code-wrap"><div class="code-head"><span>Kod / Komut</span><button type="button" class="btn-copy" onclick="copySnippet(this)">Kopyala</button></div><pre><code>${code.trim()}</code></pre></div>`;
+    });
+    return withCodeBlocks.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
+  }
+  window.copySnippet = function(btn) {
+    const wrap = btn.closest('.code-wrap');
+    if (!wrap) return;
+    const code = wrap.querySelector('pre code')?.innerText || '';
+    navigator.clipboard.writeText(code).then(() => {
+      btn.textContent = 'Kopyalandı!';
+      setTimeout(() => btn.textContent = 'Kopyala', 2000);
+    });
+  };
+
   async function api(path, opts) {
     try {
       const r = await fetch(path, opts);
@@ -96,20 +114,39 @@
   /* ─────────────────────────── DATA ─────────────────────────── */
   async function loadCore(force) {
     if (!force && state.memories.length && Date.now() - state.loadedAt < 30000) return;
-    state.loading = api('/api/graph').then(g => {
-      if (!g) { state.graphError = true; return; }
+    state.loading = api('/api/memories').then(mems => {
+      if (!mems || !Array.isArray(mems)) { state.graphError = true; return; }
       state.graphError = false;
-      const nodes = g.nodes || [];
-      state.memories = nodes.filter(n => n.type === 'memory' && n.oda !== 'entity')
-        .map(n => ({ id: n.id, konu: n.label, bilgi: n.content, oda: n.oda || 'genel',
-                     kanat: n.kanat || 'genel', dolap: n.dolap || 'genel',
-                     importance: Number(n.importance) || 7, tags: n.tags || [], created_at: n.created_at || '' }));
-      state.entities = nodes.filter(n => n.type === 'entity');
-      state.links = g.links || [];
+      state.memories = mems.map(m => ({
+        id: m.id,
+        konu: m.konu,
+        bilgi: m.content || m.bilgi || '',
+        oda: m.oda || 'genel',
+        kanat: m.kanat || 'genel',
+        dolap: m.dolap || 'genel',
+        importance: Number(m.importance) || 7,
+        access_count: Number(m.access_count) || 0,
+        tags: m.tags || [],
+        created_at: m.created_at || '',
+        updated_at: m.updated_at || '',
+        agent_id: m.agent_id || 'user',
+        archived: m.archived === true || m.archived === 'true'
+      }));
       buildRooms();
       state.loadedAt = Date.now();
     });
     await state.loading;
+  }
+
+  async function loadGraphData(force) {
+    if (!force && state.graphLoaded && Date.now() - state.graphLoadedAt < 60000) return;
+    const g = await api('/api/graph');
+    if (g) {
+      state.entities = (g.nodes || []).filter(n => n.type === 'entity');
+      state.links = g.links || [];
+      state.graphLoaded = true;
+      state.graphLoadedAt = Date.now();
+    }
   }
 
   async function loadHeader() {
@@ -213,7 +250,7 @@
     await loadCore();
     const v = state.route.view;
     if (v === 'overview') await viewOverview(c);
-    else if (v === 'graph') viewGraph(c);
+    else if (v === 'graph') await viewGraph(c);
     else if (v === 'rooms') viewRooms(c);
     else if (v === 'room') viewRoomDetail(c, state.route.param);
     else if (v === 'timeline') viewTimeline(c);
@@ -318,8 +355,7 @@
   }
 
   /* ─────────────────────────── VIEW: GRAPH ─────────────────────────── */
-  /* ─────────────────────────── VIEW: GRAPH ─────────────────────────── */
-  function viewGraph(c) {
+  async function viewGraph(c) {
     if (state.graphError) { c.innerHTML = errorHTML(); return; }
     if (!window.d3) {
       c.innerHTML = viewShell('Bilgi Grafiği', 'Zihin sarayının ilişki ağı', '') +
@@ -342,6 +378,8 @@
         <div class="graph-legend" id="graphLegend"></div>
       </div>`;
 
+    await loadGraphData();
+
     const rerender = () => {
       state.graph.showAllLabels = $('#gLabels').checked;
       state.graph.showEntities = $('#gEntities').checked;
@@ -354,7 +392,7 @@
     $('#gEntities').onchange = rerender;
     $('#gSemantic').onchange = rerender;
     $('#gFit').onclick = () => resetGraphZoom();
-    $('#gReheat').onclick = () => renderGraph(true);
+    $('#gReheat').onclick = async () => { await loadGraphData(true); renderGraph(true); };
     renderGraph(true);
   }
 
@@ -904,6 +942,7 @@
       <div class="mi-body">${esc((m.bilgi || '').slice(0, 220))}</div>
       <div class="mi-foot">
         <span title="${esc(fmtDateTime(m.created_at))}">${esc(ago(m.created_at))}</span>
+        ${(m.agent_id && m.agent_id !== 'user') ? `<span class="tag" style="border-color:var(--violet);color:var(--violet);">🤖 ${esc(m.agent_id)}</span>` : ''}
         ${(m.tags || []).slice(0, 4).map(t => `<span class="tag">${esc(t)}</span>`).join('')}
       </div>
     </div>`;
@@ -940,13 +979,17 @@
         </div>
         <span class="modal-close" onclick="closeModal()">✕</span>
       </div>
-      <div class="mempalace-badge-row" style="margin: 10px 0 16px; padding: 10px 14px; background: color-mix(in srgb, var(--surface) 60%, transparent); border: 1px solid var(--border); border-radius: 8px;">
-        <span style="font-size: .75rem; color: var(--text-faint); margin-right: 4px;">ZİHİN SARAYI KONUMU:</span>
+      <div class="mempalace-badge-row" style="margin: 10px 0 16px; padding: 10px 14px; background: color-mix(in srgb, var(--surface) 60%, transparent); border: 1px solid var(--border); border-radius: 8px; display:flex; flex-wrap:wrap; align-items:center; gap:6px;">
+        <span style="font-size: .75rem; color: var(--text-faint); margin-right: 4px;">ZİHİN SARAYI:</span>
         <span class="badge room" style="border-color:${meta.color}">${meta.icon} ${esc(meta.label)}</span>
         <span class="mempalace-sep">›</span>
         <span class="badge wing">🪽 Kanat: ${esc(m.kanat || 'genel')}</span>
         <span class="mempalace-sep">›</span>
         <span class="badge closet">🗄️ Dolap: ${esc(m.dolap || 'genel')}</span>
+        <span style="margin-left:auto;">${(m.agent_id && m.agent_id !== 'user')
+          ? `<span class="badge" style="border-color:var(--violet);color:var(--violet);">🤖 Ajan: ${esc(m.agent_id)}</span>`
+          : `<span class="badge" style="border-color:var(--teal);color:var(--teal);">👤 Kullanıcı</span>`}
+        </span>
       </div>
       <div class="meta-grid">
         <div class="mg"><label>Önem</label><b style="color:var(--amber)">★ ${Number(m.importance).toFixed(1)}</b></div>
@@ -955,7 +998,7 @@
         <div class="mg"><label>Bağlantı</label><b>${related.length}</b></div>
       </div>
       <div style="margin-bottom:8px">${(m.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
-      <div class="detail-body">${esc(m.bilgi)}</div>
+      <div class="detail-body">${formatBody(m.bilgi)}</div>
       ${related.length ? `<h3 style="margin:20px 0 10px">🔗 İlişkili Anılar</h3>
         <div class="mem-list">${related.slice(0, 6).map(r => memItem(r)).join('')}</div>` : ''}
       <div style="display:flex;gap:10px;margin-top:22px">
@@ -990,7 +1033,7 @@
       <div class="modal-head">
         <div>
           <h2>+ Yeni Anı Ekle</h2>
-          <div class="muted small" style="margin-top:4px">Ollama ile otomatik sınıflandırma, semantik vektörleme ve varlık ilişkisi çıkarımı</div>
+          <div class="muted small" id="addModalSubtitle" style="margin-top:4px">Zihin Sarayı'na hızlı ve doğrudan kayıt (0 MB VRAM)</div>
         </div>
         <span class="modal-close" onclick="closeModal()">✕</span>
       </div>
@@ -1083,19 +1126,22 @@
       fResetDate.onclick = () => { fTarih.value = ''; toast('Tarih şimdiki zamana ayarlandı'); };
     }
 
-    // AI toggle dinamik etiket
+    // AI toggle dinamik etiket ve alt başlık senkronizasyonu
     const fUseAi = $('#fUseAi');
     const aiModeBadge = $('#aiModeBadge');
     const aiModeDesc = $('#aiModeDesc');
+    const addModalSubtitle = $('#addModalSubtitle');
     if (fUseAi && aiModeBadge && aiModeDesc) {
       fUseAi.onchange = () => {
         if (fUseAi.checked) {
+          if (addModalSubtitle) addModalSubtitle.textContent = 'Ollama ile otomatik sınıflandırma, semantik vektörleme ve varlık ilişkisi çıkarımı';
           aiModeBadge.textContent = 'Akıllı Mod (VRAM Aktif)';
           aiModeBadge.style.background = 'color-mix(in srgb, var(--violet) 20%, transparent)';
           aiModeBadge.style.color = 'var(--violet)';
           aiModeBadge.style.borderColor = 'var(--violet)';
           aiModeDesc.textContent = 'Ollama modeli yüklenir; varlık çıkarımı, bilgi grafiği ve çakışma tespiti yapılır.';
         } else {
+          if (addModalSubtitle) addModalSubtitle.textContent = 'Zihin Sarayı\'na hızlı ve doğrudan kayıt (0 MB VRAM)';
           aiModeBadge.textContent = 'Hızlı (0 MB VRAM)';
           aiModeBadge.style.background = 'var(--surface-hover)';
           aiModeBadge.style.color = 'var(--text-dim)';

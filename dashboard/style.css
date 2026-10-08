@@ -321,6 +321,12 @@ select.field { cursor: pointer; }
 .modal-close { margin-left: auto; cursor: pointer; color: var(--text-dim); font-size: 1.3rem; line-height: 1; }
 .modal-close:hover { color: var(--text); }
 .modal .detail-body { margin-top: 12px; font-size: .88rem; line-height: 1.65; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.code-wrap { margin: 12px 0; border-radius: var(--radius); background: #0c0e14; border: 1px solid var(--border); overflow: hidden; }
+.code-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: .72rem; font-family: var(--mono); color: var(--text-dim); }
+.btn-copy { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: .7rem; padding: 2px 8px; cursor: pointer; transition: all .15s ease; }
+.btn-copy:hover { background: var(--surface-hover); color: var(--text); border-color: var(--violet); }
+.code-wrap pre { margin: 0; padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: .82rem; line-height: 1.5; color: #a5b4fc; }
+.inline-code { font-family: var(--mono); font-size: .82rem; background: var(--surface); color: var(--amber); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }
 .modal .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 16px 0; }
 .modal .meta-grid .mg { padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--border-soft); }
 .modal .meta-grid .mg label { font-size: .68rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: .6px; }

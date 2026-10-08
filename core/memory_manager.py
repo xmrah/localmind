@@ -198,6 +198,18 @@ class MemoryManager:
             ))
         return memories
 
+    def get_memory_counts(self) -> dict:
+        """Aktif, arşivli ve toplam anı sayılarını hızlıca döndürür."""
+        try:
+            data = self.collection.get(include=["metadatas"])
+            archived = sum(1 for m in data.get("metadatas", []) if m.get("archived", "false") == "true")
+            total = len(data.get("ids", []))
+            active = total - archived
+            return {"active": active, "archived": archived, "total": total}
+        except Exception:
+            c = self.collection.count()
+            return {"active": c, "archived": 0, "total": c}
+
     def get_stats(self) -> dict:
         """Oda bazlı istatistikler."""
         memories = self.get_all_memories()
