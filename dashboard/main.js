@@ -52,10 +52,10 @@
   function formatBody(raw) {
     if (!raw) return '';
     const safe = esc(raw);
-    const withCodeBlocks = safe.replace(/```(?:[a-zA-Z0-9_\-]+)?\n?([\s\S]*?)```/g, (_, code) => {
+    const withCodeBlocks = safe.replace(/```(?:[a-zA-Z0-9_\-]+)?[^\S\r\n]*\r?\n?([\s\S]*?)\r?\n?```/g, (_, code) => {
       return `<div class="code-wrap"><div class="code-head"><span>Kod / Komut</span><button type="button" class="btn-copy" onclick="copySnippet(this)">Kopyala</button></div><pre><code>${code.trim()}</code></pre></div>`;
     });
-    return withCodeBlocks.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
+    return withCodeBlocks.replace(/`([^`\r\n]+)`/g, '<code class="inline-code">$1</code>');
   }
   window.copySnippet = function(btn) {
     const wrap = btn.closest('.code-wrap');
