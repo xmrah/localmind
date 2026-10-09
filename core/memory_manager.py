@@ -571,53 +571,66 @@ class MemoryManager:
         # Vektör benzerlik bağları (Tüm aktif anılar için precomputed embedding matrisi ile)
         links = []
         if len(memories) > 1:
+            raw = None
             try:
                 raw = self.collection.get(
                     where={"archived": "false"},
                     include=["embeddings"]
                 )
-                raw_ids = raw.get("ids", [])
-                raw_embs = raw.get("embeddings")
+            except Exception as e:
+                log.warning(f"Chroma link get hatası, koleksiyon yenileniyor: {e}")
+                try:
+                    # Harici süreç yazımlarında Chroma segment önbelleğini tazelemek için koleksiyonu yeniden al
+                    self.collection = self.client.get_collection(COLLECTION)
+                    raw = self.collection.get(
+                        where={"archived": "false"},
+                        include=["embeddings"]
+                    )
+                except Exception as e2:
+                    log.warning(f"Koleksiyon filtresiz çekiliyor: {e2}")
+                    try:
+                        raw = self.collection.get(include=["embeddings", "metadatas"])
+                    except Exception as e3:
+                        log.error(f"Chroma embedding alınamadı: {e3}")
 
-                if raw_embs is not None and len(raw_embs) > 1:
-                    import numpy as np
-                    embs = np.array(raw_embs, dtype=np.float32)
-                    norms = np.linalg.norm(embs, axis=1, keepdims=True)
-                    norms[norms == 0] = 1.0
-                    norm_embs = embs / norms
-                    sim_matrix = np.dot(norm_embs, norm_embs.T)
-                    np.fill_diagonal(sim_matrix, 0)
+            if raw:
+                try:
+                    raw_ids = raw.get("ids", [])
+                    raw_embs = raw.get("embeddings")
+                    metas = raw.get("metadatas")
 
-                    seen = set()
-                    memory_id_set = {m.id for m in memories}
+                    # Eğer filtresiz fallback kullanıldıysa, arşivlenenleri filtrele
+                    if metas is not None and len(metas) == len(raw_ids):
+                        active_indices = [
+                            idx for idx, m in enumerate(metas)
+                            if (m or {}).get("archived", "false") != "true"
+                        ]
+                        raw_ids = [raw_ids[idx] for idx in active_indices]
+                        if raw_embs is not None:
+                            raw_embs = [raw_embs[idx] for idx in active_indices]
 
-                    for i, src_id in enumerate(raw_ids):
-                        if src_id not in memory_id_set:
-                            continue
-                        top_indices = np.argsort(sim_matrix[i])[-2:]
+                    if raw_embs is not None and len(raw_embs) > 1:
+                        import numpy as np
+                        embs = np.array(raw_embs, dtype=np.float32)
+                        norms = np.linalg.norm(embs, axis=1, keepdims=True)
+                        norms[norms == 0] = 1.0
+                        norm_embs = embs / norms
+                        sim_matrix = np.dot(norm_embs, norm_embs.T)
+                        np.fill_diagonal(sim_matrix, 0)
 
-                        # En iyi 1. komşu (>= 0.50)
-                        best_j = top_indices[-1]
-                        sim_best = float(sim_matrix[i, best_j])
-                        if sim_best >= 0.50:
-                            tgt_id = raw_ids[best_j]
-                            if tgt_id in memory_id_set and tgt_id != src_id:
-                                pair = tuple(sorted([src_id, tgt_id]))
-                                if pair not in seen:
-                                    seen.add(pair)
-                                    links.append({
-                                        "source": src_id,
-                                        "target": tgt_id,
-                                        "value": round(sim_best, 2),
-                                        "type": "semantic"
-                                    })
+                        seen = set()
+                        memory_id_set = {m.id for m in memories}
 
-                        # 2. komşu (sadece çok yüksek anlamsal yakınlık varsa >= 0.58)
-                        if len(top_indices) > 1:
-                            sec_j = top_indices[-2]
-                            sim_sec = float(sim_matrix[i, sec_j])
-                            if sim_sec >= 0.58:
-                                tgt_id = raw_ids[sec_j]
+                        for i, src_id in enumerate(raw_ids):
+                            if src_id not in memory_id_set:
+                                continue
+                            top_indices = np.argsort(sim_matrix[i])[-2:]
+
+                            # En iyi 1. komşu (>= 0.50)
+                            best_j = top_indices[-1]
+                            sim_best = float(sim_matrix[i, best_j])
+                            if sim_best >= 0.50:
+                                tgt_id = raw_ids[best_j]
                                 if tgt_id in memory_id_set and tgt_id != src_id:
                                     pair = tuple(sorted([src_id, tgt_id]))
                                     if pair not in seen:
@@ -625,11 +638,28 @@ class MemoryManager:
                                         links.append({
                                             "source": src_id,
                                             "target": tgt_id,
-                                            "value": round(sim_sec, 2),
+                                            "value": round(sim_best, 2),
                                             "type": "semantic"
                                         })
-            except Exception as e:
-                log.warning(f"Graph link hesaplama hatası: {e}")
+
+                            # 2. komşu (sadece çok yüksek anlamsal yakınlık varsa >= 0.58)
+                            if len(top_indices) > 1:
+                                sec_j = top_indices[-2]
+                                sim_sec = float(sim_matrix[i, sec_j])
+                                if sim_sec >= 0.58:
+                                    tgt_id = raw_ids[sec_j]
+                                    if tgt_id in memory_id_set and tgt_id != src_id:
+                                        pair = tuple(sorted([src_id, tgt_id]))
+                                        if pair not in seen:
+                                            seen.add(pair)
+                                            links.append({
+                                                "source": src_id,
+                                                "target": tgt_id,
+                                                "value": round(sim_sec, 2),
+                                                "type": "semantic"
+                                            })
+                except Exception as calc_err:
+                    log.warning(f"Graph matris hesaplama hatası: {calc_err}")
 
         # SQLite entity bağları
         try:
