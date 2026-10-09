@@ -177,14 +177,55 @@
     const map = new Map();
     for (const m of state.memories) {
       const k = m.oda || 'genel';
-      if (!map.has(k)) map.set(k, { key: k, count: 0, impSum: 0, last: '', newest: 0 });
-      const r = map.get(k); r.count++; r.impSum += m.importance;
+      if (!map.has(k)) {
+        map.set(k, {
+          key: k, count: 0, impSum: 0, last: '', newest: 0,
+          wings: new Set(), closets: new Set(), tagCounts: {},
+          latestMem: null
+        });
+      }
+      const r = map.get(k);
+      r.count++;
+      r.impSum += (m.importance || 7);
+      if (m.kanat && m.kanat !== 'genel') r.wings.add(m.kanat);
+      if (m.dolap && m.dolap !== 'genel') r.closets.add(m.dolap);
+      (m.tags || []).forEach(t => { r.tagCounts[t] = (r.tagCounts[t] || 0) + 1; });
       const t = Date.parse(m.created_at) || 0;
-      if (t >= r.newest) { r.newest = t; r.last = m.created_at; }
+      if (t >= r.newest) {
+        r.newest = t;
+        r.last = m.created_at;
+        r.latestMem = m;
+      }
     }
     state.rooms = Array.from(map.values()).map(r => {
       const meta = roomMeta(r.key);
-      return { ...r, label: meta.label, color: meta.color, ico: meta.ico, avgImp: r.count ? r.impSum / r.count : 0 };
+      const topTags = Object.entries(r.tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => t);
+      const daysAgo = r.newest ? (Date.now() - r.newest) / (1000 * 60 * 60 * 24) : 999;
+      let status = 'uyuyan';
+      let statusLabel = 'Uyuyan';
+      let statusColor = 'var(--amber)';
+      let statusIcon = 'timer';
+      if (daysAgo <= 7) {
+        status = 'aktif';
+        statusLabel = 'Aktif';
+        statusColor = 'var(--green)';
+        statusIcon = 'sparkles';
+      } else if (daysAgo <= 30) {
+        status = 'taze';
+        statusLabel = 'Taze';
+        statusColor = 'var(--blue)';
+        statusIcon = 'activity';
+      }
+      return {
+        ...r,
+        label: meta.label, color: meta.color, ico: meta.ico,
+        avgImp: r.count ? r.impSum / r.count : 0,
+        wingsCount: r.wings.size,
+        closetsCount: r.closets.size,
+        topTags,
+        status, statusLabel, statusColor, statusIcon,
+        latestTitle: r.latestMem ? r.latestMem.konu : ''
+      };
     }).sort((a, b) => b.count - a.count);
   }
 
@@ -331,7 +372,12 @@
 
     const donut = donutSVG(state.rooms.map(r => ({ label: r.label, value: r.count, color: r.color })));
 
-    c.innerHTML = viewShell('Genel Bakış', 'Zihin sarayının anlık durumu ve öne çıkanlar', '') + `
+    const headerControls = `<div style="display:inline-flex;align-items:center;gap:8px;">
+      <span class="live-pill"><span class="live-dot"></span>Yerel Beyin Çevrimiçi</span>
+      <button class="btn small primary" onclick="openAddForm()">${ico('plus', 14)} Yeni Anı</button>
+    </div>`;
+
+    c.innerHTML = viewShell('Genel Bakış', 'Zihin sarayının anlık durumu ve öne çıkanlar', headerControls) + `
       <div class="grid cols-kpi" style="margin-bottom:16px">
         ${kpi('Toplam Anı', total, `${roomCount} odaya dağılmış`, 'var(--violet)')}
         ${kpi('Ortalama Önem', avgImp.toFixed(1), '10 üzerinden', 'var(--amber)')}
@@ -368,13 +414,39 @@
 
     bindMemItems(c);
     bindReminderItems(c);
+    animateCounters(c);
   }
 
   function kpi(label, value, sub, color) {
-    return `<div class="card kpi"><div class="kpi-accent" style="background:${color}"></div>
+    const num = Number(value);
+    const isNum = !isNaN(num) && value !== '' && value !== null && typeof value !== 'boolean';
+    const countAttr = isNum ? `data-countup="${num}"` : '';
+    return `<div class="card kpi" style="--kpi-col:${color}"><div class="kpi-accent" style="background:${color}"></div>
       <div class="kpi-label">${esc(label)}</div>
-      <div class="kpi-value" style="color:${color}">${esc(value)}</div>
+      <div class="kpi-value" style="color:${color}" ${countAttr}>${esc(value)}</div>
       ${sub ? `<div class="kpi-sub">${esc(sub)}</div>` : ''}</div>`;
+  }
+  function animateCounters(container) {
+    if (!container) return;
+    const items = container.querySelectorAll('[data-countup]');
+    items.forEach(el => {
+      const target = parseFloat(el.getAttribute('data-countup'));
+      if (isNaN(target)) return;
+      const raw = el.getAttribute('data-countup');
+      const isFloat = raw.includes('.');
+      const decimals = isFloat ? (raw.split('.')[1]?.length || 1) : 0;
+      const duration = 420;
+      const start = performance.now();
+      function tick(now) {
+        const p = Math.min((now - start) / duration, 1);
+        const ease = p === 1 ? 1 : 1 - Math.pow(2, -10 * p);
+        const current = target * ease;
+        el.textContent = isFloat ? current.toFixed(decimals) : Math.round(current);
+        if (p < 1) requestAnimationFrame(tick);
+        else el.textContent = isFloat ? target.toFixed(decimals) : target;
+      }
+      requestAnimationFrame(tick);
+    });
   }
   function barRow(label, value, max, color) {
     const effectiveMax = Math.max(max, 5);
@@ -587,12 +659,13 @@
       .call(d3.drag()
         .on('start', (e, d) => { if (!e.active) graphSim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
         .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
-        .on('end', (e, d) => { if (!e.active) graphSim.alphaTarget(0); d.fx = null; d.fy = null; }));
+        .on('end', (e, d) => { if (!e.active) graphSim.alphaTarget(0.005); d.fx = null; d.fy = null; }));
 
     // Düğüm grafikleri
     nodeG.each(function (d) {
       const g2 = d3.select(this);
       const isImportant = (d.importance || 5) >= 8;
+      const deg = degree.get(d.id) || 0;
 
       if (d.type === 'entity') {
         const s = d.r;
@@ -602,6 +675,11 @@
           .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
       } else {
         const col = roomMeta(d.oda).color;
+        // Çok bağlantılı veya önemli merkez düğümlerde nefes alan hare (breathing aura)
+        if (deg >= 3 || isImportant) {
+          g2.append('circle').attr('class', 'halo hub-aura')
+            .attr('r', d.r + (isImportant ? 10 : 7)).attr('fill', col).attr('opacity', 0.2);
+        }
         // Dış hafif parıltı (halo)
         g2.append('circle').attr('class', 'halo')
           .attr('r', d.r + (isImportant ? 6 : 4)).attr('fill', col).attr('opacity', isImportant ? 0.22 : 0.12);
@@ -668,6 +746,12 @@
           const t = l.target.id || l.target;
           if (s === activeId || t === activeId) return 2.6;
           return l.type === 'entity' ? 1.2 : Math.max(1, (l.value || 0.4) * 2.2);
+        })
+        .classed('link-flow', l => {
+          if (!isFiltered) return false;
+          const s = l.source.id || l.source;
+          const t = l.target.id || l.target;
+          return s === activeId || t === activeId;
         });
     }
 
@@ -718,6 +802,9 @@
     });
 
     updateLabelSizes();
+    // Ambient drift: Başlangıçta simülasyon sakinleşince tamamen donup kalmaması için
+    // sürekli hafif bir nefes alma hedefi (alphaTarget 0.0035) veriyoruz
+    graphSim.alphaTarget(0.0035);
     if (reheat) graphSim.alpha(1).restart();
     // Initial camera: geniş ve ferah çerçeveleme
     svg.call(zoom.transform, d3.zoomIdentity.translate(W * 0.08, H * 0.08).scale(0.85));
@@ -737,18 +824,51 @@
     if (state.graphError) { c.innerHTML = errorHTML(); return; }
     renderRoomNav();
     if (!state.rooms.length) { c.innerHTML = viewShell('Odalar', 'Otomatik sınıflandırılmış hafıza odaları', '', emptyHTML('Henüz oda yok.', 'folder')); return; }
-    c.innerHTML = viewShell('Odalar', 'Anıların otomatik yerleştirildiği odalar', '') + `
+    c.innerHTML = viewShell('Odalar', 'Zihin Sarayı’nın tematik bilgi odaları ve alt mekanları', '') + `
       <div class="grid cols-3">
         ${state.rooms.map(r => `
-          <div class="card" style="cursor:pointer;border-left:3px solid ${r.color}" onclick="navigate('room','${esc(r.key)}')">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-              <span style="display:inline-flex;color:${r.color}">${ico(r.ico, 24)}</span>
-              <div><div style="font-weight:700">${esc(r.label)}</div><div class="muted small">${r.count} anı · ort. önem ${r.avgImp.toFixed(1)}</div></div>
+          <div class="card room-card" style="border-left:3px solid ${r.color}" onclick="navigate('room','${esc(r.key)}')">
+            <div class="room-card-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="room-icon-badge" style="color:${r.color};background:color-mix(in srgb, ${r.color} 14%, transparent)">
+                  ${ico(r.ico, 22)}
+                </span>
+                <div>
+                  <div class="room-card-title">${esc(r.label)}</div>
+                  <div class="muted small">${r.count} anı · ort. önem ${r.avgImp.toFixed(1)}</div>
+                </div>
+              </div>
+              <span class="badge room-status-badge" style="border-color:${r.statusColor};color:${r.statusColor};background:color-mix(in srgb, ${r.statusColor} 10%, transparent)">
+                ${ico(r.statusIcon, 11)} ${r.statusLabel}
+              </span>
             </div>
-            <div class="bar-track" style="margin-bottom:8px"><div class="bar-fill" style="width:${clamp(r.count / state.rooms[0].count * 100, 4, 100)}%;background:${r.color}"></div></div>
-            <div class="muted small">son güncelleme: ${r.last ? esc(ago(r.last)) : '—'}</div>
+
+            <div class="bar-track" style="margin:10px 0 12px">
+              <div class="bar-fill" style="width:${clamp(r.count / state.rooms[0].count * 100, 4, 100)}%;background:${r.color}"></div>
+            </div>
+
+            ${r.latestTitle ? `
+            <div class="room-latest-box" title="Son anı: ${esc(r.latestTitle)}">
+              <span class="room-latest-ico">${ico('fileText', 12)}</span>
+              <span class="room-latest-text">${esc(r.latestTitle)}</span>
+            </div>` : ''}
+
+            <div class="room-card-foot">
+              <div class="room-subspaces">
+                ${r.wingsCount ? `<span class="badge wing" title="${r.wingsCount} farklı kanat">${ico('feather', 10)} ${r.wingsCount} kanat</span>` : ''}
+                ${r.closetsCount ? `<span class="badge closet" title="${r.closetsCount} farklı dolap">${ico('archive', 10)} ${r.closetsCount} dolap</span>` : ''}
+                ${!r.wingsCount && !r.closetsCount ? `<span class="muted small">Genel alan</span>` : ''}
+              </div>
+              <div class="muted small">${r.last ? esc(ago(r.last)) : '—'}</div>
+            </div>
+
+            ${r.topTags && r.topTags.length ? `
+            <div class="room-tags-row">
+              ${r.topTags.map(t => `<span class="tag">#${esc(t)}</span>`).join('')}
+            </div>` : ''}
           </div>`).join('')}
       </div>`;
+    if (typeof window.hydrateIcons === 'function') window.hydrateIcons(c);
   }
 
   /* ─────────────────────────── VIEW: ROOM DETAIL ─────────────────────────── */
@@ -804,15 +924,108 @@
   }
 
   /* ─────────────────────────── VIEW: TIMELINE ─────────────────────────── */
+  function heatmapHTML(mem, selectedDay) {
+    const counts = new Map();
+    for (const m of mem) {
+      const k = (m.created_at || '').slice(0, 10);
+      if (k) counts.set(k, (counts.get(k) || 0) + 1);
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dayOfWeek = (today.getDay() + 6) % 7; // 0=Mon, 6=Sun
+    const totalWeeks = 20;
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - (totalWeeks - 1) * 7 - dayOfWeek);
+
+    const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    const monthCols = [];
+    let lastMonth = -1;
+
+    let colsHTML = '';
+    const cur = new Date(startDate);
+
+    for (let w = 0; w < totalWeeks; w++) {
+      let colCells = '';
+      let mLabel = '';
+      for (let d = 0; d < 7; d++) {
+        const iso = cur.toISOString().slice(0, 10);
+        const isFuture = cur > today;
+        const cnt = counts.get(iso) || 0;
+        const isSel = selectedDay === iso;
+
+        if (d === 0) {
+          const m = cur.getMonth();
+          if (m !== lastMonth) {
+            mLabel = monthNames[m];
+            lastMonth = m;
+          }
+        }
+
+        let lvl = 0;
+        if (cnt >= 7) lvl = 4;
+        else if (cnt >= 4) lvl = 3;
+        else if (cnt >= 2) lvl = 2;
+        else if (cnt >= 1) lvl = 1;
+
+        if (isFuture) {
+          colCells += `<div class="hm-cell hm-future"></div>`;
+        } else {
+          const title = `${fmtDate(iso)}: ${cnt} anı`;
+          colCells += `<div class="hm-cell hm-lvl-${lvl}${isSel ? ' selected' : ''}" data-day="${iso}" title="${title}"></div>`;
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+      monthCols.push(mLabel);
+      colsHTML += `<div class="hm-col">${colCells}</div>`;
+    }
+
+    const monthsHeader = monthCols.map(m => `<div class="hm-m-lbl">${m}</div>`).join('');
+
+    return `
+      <div class="hm-wrap">
+        <div class="hm-head">
+          <div class="hm-title">${ico('calendar', 14)} <b>Hafıza Isı Haritası</b> <span class="muted small">son 20 hafta</span></div>
+          ${selectedDay ? `<button class="btn small ghost" id="hmClearFilter">${ico('x', 12)} Filtreyi Temizle (${fmtDate(selectedDay)})</button>` : ''}
+          <div class="hm-legend">
+            <span class="muted small">Az</span>
+            <span class="hm-cell hm-lvl-0"></span>
+            <span class="hm-cell hm-lvl-1"></span>
+            <span class="hm-cell hm-lvl-2"></span>
+            <span class="hm-cell hm-lvl-3"></span>
+            <span class="hm-cell hm-lvl-4"></span>
+            <span class="muted small">Çok</span>
+          </div>
+        </div>
+        <div class="hm-body">
+          <div class="hm-days-lbl">
+            <span>Pzt</span>
+            <span>Çar</span>
+            <span>Cum</span>
+          </div>
+          <div class="hm-grid-area">
+            <div class="hm-months-row">${monthsHeader}</div>
+            <div class="hm-grid">${colsHTML}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function viewTimeline(c) {
     if (state.graphError) { c.innerHTML = errorHTML(); return; }
     renderRoomNav();
     const days = state.timelineDays;
-    const mem = state.memories.filter(m => daysOld(m.created_at) <= days);
+    const selDay = state.timelineSelectedDay || null;
+
+    let mem = state.memories.filter(m => daysOld(m.created_at) <= days);
+    if (selDay) {
+      mem = mem.filter(m => (m.created_at || '').slice(0, 10) === selDay);
+    }
+
     const controls = `<div class="seg" id="tlRange">
       ${[7, 30, 90, 3650].map(d => `<button data-d="${d}" class="${d === days ? 'active' : ''}">${d === 3650 ? 'Tümü' : 'Son ' + d + ' gün'}</button>`).join('')}
     </div>`;
-    if (!mem.length) { c.innerHTML = viewShell('Zaman Çizelgesi', 'Zamana yayılmış anılar', controls) + emptyHTML('Bu aralıkta anı yok.', 'timeline'); bindRange(c); return; }
 
     const sorted = [...mem].sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
     const groups = new Map();
@@ -821,21 +1034,49 @@
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(m);
     }
-    const activity = dailyCounts(mem, Math.min(days, 90));
+    const activity = dailyCounts(state.memories, Math.min(days, 90));
 
     c.innerHTML = viewShell('Zaman Çizelgesi', `${mem.length} anı · son ${days === 3650 ? 'tüm zamanlar' : days + ' gün'}`, controls) + `
-      <div class="card" style="margin-bottom:16px">
-        <h3>${ico('trending', 15)} Günlük Kayıt Aktivitesi <span class="sub">son ${activity.length} gün</span></h3>
-        ${areaSVG(activity)}
+      <div class="grid cols-2" style="margin-bottom:16px">
+        <div class="card">
+          ${heatmapHTML(state.memories, selDay)}
+        </div>
+        <div class="card">
+          <h3>${ico('trending', 15)} Günlük Kayıt Aktivitesi <span class="sub">son ${activity.length} gün</span></h3>
+          ${areaSVG(activity)}
+        </div>
       </div>
-      <div>${Array.from(groups.entries()).map(([day, items]) => `
-        <div class="tl-day">
+
+      ${selDay ? `
+        <div class="card" style="margin-bottom:14px;padding:10px 14px;background:color-mix(in srgb, var(--violet) 10%, transparent);border-color:color-mix(in srgb, var(--violet) 40%, var(--border));display:flex;align-items:center;justify-content:space-between">
+          <span>${ico('calendar', 14)} <b>${fmtDate(selDay)}</b> tarihine ait <b>${mem.length} anı</b> listeleniyor</span>
+          <button class="btn small ghost" id="tlResetDay">${ico('x', 12)} Filtreyi Sıfırla</button>
+        </div>` : ''}
+
+      <div>${groups.size ? Array.from(groups.entries()).map(([day, items]) => `
+        <div class="tl-day" id="tl-day-${esc(day)}">
           <div class="tl-day-label"><b>${esc(fmtDate(day))}</b><span>${items.length} anı</span></div>
           <div class="tl-rail"></div>
           <div class="tl-items">${items.map(m => memItem(m)).join('')}</div>
-        </div>`).join('')}</div>`;
+        </div>`).join('') : emptyHTML(selDay ? 'Bu tarihe ait anı bulunamadı.' : 'Bu aralıkta anı yok.', 'timeline')}</div>`;
+
     bindRange(c);
     bindMemItems(c);
+
+    // Bind heatmap cell clicks
+    c.querySelectorAll('.hm-cell[data-day]').forEach(cell => {
+      cell.onclick = () => {
+        const d = cell.dataset.day;
+        state.timelineSelectedDay = (state.timelineSelectedDay === d ? null : d);
+        viewTimeline(c);
+      };
+    });
+
+    const clr = $('#hmClearFilter', c);
+    if (clr) clr.onclick = () => { state.timelineSelectedDay = null; viewTimeline(c); };
+    const rst = $('#tlResetDay', c);
+    if (rst) rst.onclick = () => { state.timelineSelectedDay = null; viewTimeline(c); };
+    if (typeof window.hydrateIcons === 'function') window.hydrateIcons(c);
   }
   function bindRange(c) {
     const seg = $('#tlRange', c); if (!seg) return;
@@ -866,12 +1107,51 @@
     const archCount = state.health?.memories && state.health.memories > mem.length ? (state.health.memories - mem.length) : 0;
     const countSub = archCount > 0 ? `${archCount} arşivde (${state.health.memories} toplam)` : 'aktif kayıt';
 
+    const connectedIds = new Set();
+    (state.links || []).forEach(l => {
+      connectedIds.add(typeof l.source === 'object' ? l.source.id : l.source);
+      connectedIds.add(typeof l.target === 'object' ? l.target.id : l.target);
+    });
+    const orphans = mem.filter(m => !connectedIds.has(m.id));
+    const reviewQueue = mem.filter(m => (m.importance || 5) >= 8 && daysOld(m.created_at) >= 30);
+    const topRoom = state.rooms[0];
+    const topRoomPct = topRoom ? Math.round((topRoom.count / mem.length) * 100) : 0;
+
     c.innerHTML = viewShell('Analitik', 'Oda, etiket, önem ve unutma eğrisi analizleri', '') + `
       <div class="grid cols-kpi" style="margin-bottom:16px">
         ${kpi('Aktif Anı', mem.length, countSub, 'var(--violet)')}
         ${kpi('Ort. Önem', avgImp.toFixed(2), '10 üzerinden', 'var(--amber)')}
         ${kpi('Ort. Canlılık', avgLive.toFixed(2), 'unutma sonrası', 'var(--cyan)')}
         ${kpi('En Eski Anı', ago(oldest.created_at), fmtDate(oldest.created_at), 'var(--blue)')}
+      </div>
+
+      <div class="grid cols-3" style="margin-bottom:16px">
+        <div class="card insight-card">
+          <div class="insight-head">
+            <span class="insight-ico" style="color:var(--amber);background:color-mix(in srgb, var(--amber) 12%, transparent)">${ico('alert', 16)}</span>
+            <b>${reviewQueue.length} Anı Paslanıyor</b>
+          </div>
+          <div class="muted small" style="margin:8px 0 10px">Önemi yüksek (≥8) ancak 30+ gündür ziyaret edilmemiş kritik anılar.</div>
+          <div class="insight-act"><button class="btn small ghost" onclick="navigate('reminders')">${ico('bell', 13)} Hatırlatıcıda İncele</button></div>
+        </div>
+
+        <div class="card insight-card">
+          <div class="insight-head">
+            <span class="insight-ico" style="color:var(--cyan);background:color-mix(in srgb, var(--cyan) 12%, transparent)">${ico('gitFork', 16)}</span>
+            <b>${orphans.length} Öksüz Anı</b>
+          </div>
+          <div class="muted small" style="margin:8px 0 10px">Bilgi grafiğinde henüz başka hiçbir anı veya varlığa bağlanmamış kayıtlar.</div>
+          <div class="insight-act"><button class="btn small ghost" onclick="navigate('graph')">${ico('graph', 13)} Grafikte Bul</button></div>
+        </div>
+
+        <div class="card insight-card">
+          <div class="insight-head">
+            <span class="insight-ico" style="color:var(--violet);background:color-mix(in srgb, var(--violet) 12%, transparent)">${ico('sparkles', 16)}</span>
+            <b>%${topRoomPct} Odak Ağırlığı</b>
+          </div>
+          <div class="muted small" style="margin:8px 0 10px">Zihninin ana ağırlık merkezi '${topRoom ? esc(topRoom.label) : 'Genel'}' odasında yoğunlaşıyor.</div>
+          <div class="insight-act"><button class="btn small ghost" onclick="navigate('room', '${topRoom ? esc(topRoom.key) : 'genel'}')">${ico(topRoom ? topRoom.ico : 'folder', 13)} Odayı Aç</button></div>
+        </div>
       </div>
 
       <div class="grid cols-2" style="margin-bottom:16px">
@@ -896,10 +1176,14 @@
           ${kpiStat('Yüksek önem (≥8)', mem.filter(m => m.importance >= 8).length)}
         </div>
       </div>`;
+    animateCounters(c);
   }
   function kpiStat(label, value) {
+    const num = Number(value);
+    const isNum = !isNaN(num) && value !== '' && value !== null && typeof value !== 'boolean';
+    const countAttr = isNum ? `data-countup="${num}"` : '';
     return `<div class="mg" style="padding:10px 12px;border-radius:10px;background:var(--card);border:1px solid var(--border-soft)">
-      <div class="muted small">${esc(label)}</div><div style="font-size:1.2rem;font-weight:700;font-family:var(--mono);margin-top:3px">${esc(value)}</div></div>`;
+      <div class="muted small">${esc(label)}</div><div style="font-size:1.2rem;font-weight:700;font-family:var(--mono);margin-top:3px" ${countAttr}>${esc(value)}</div></div>`;
   }
 
   /* ─────────────────────────── VIEW: REMINDERS ─────────────────────────── */
