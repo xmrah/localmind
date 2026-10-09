@@ -30,3 +30,7 @@ status:
 # Logları takip et
 logs:
     journalctl -u localmind -f
+
+# Wiki dokümantasyonunu Codeberg Wiki reposuna gönder
+wiki-push:
+    @bash -c 'T=$$(mktemp -d); git clone git@codeberg.org:xmrah/localmind.wiki.git "$$T" && cp -r wiki/* "$$T/" && cd "$$T" && git add . && (git commit -m "docs(wiki): sync wiki - $$(date +"%Y-%m-%d %H:%M")" || echo "Değişiklik yok") && git push origin main; rm -rf "$$T"'
