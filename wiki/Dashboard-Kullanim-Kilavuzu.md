@@ -7,7 +7,7 @@ Localmind web yönetim paneli `http://127.0.0.1:8000` adresinde çalışan, derl
 ## Klavye ile Gezinme ve Komut Paleti
 
 * `Ctrl+K`: Komut paletini açar.
-* Canlı arama: 2 karakterden itibaren semantik arama sonuçlarını benzerlik oranıyla listeler.
+* Canlı arama: 2 karakterden itibaren BM25 ve vektör hibrit arama motoruyla, başlık önceliği ve alaka eşiği filtresiyle doğrulanmış anıları listeler. Eşleşmeyen aramalarda gürültü göstermez.
 * Sayfa geçişleri: Ok tuşları ve Enter ile istenilen sekmeye geçiş yapılır.
 * `Esc`: Açık modal veya panelleri kapatır.
 * `N`: Yeni anı ekleme penceresini açar.

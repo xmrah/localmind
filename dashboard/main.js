@@ -1525,11 +1525,11 @@
       const q = input.value.trim();
       if (!q) { box.classList.add('hidden'); return; }
       const res = await api(`/api/search?q=${encodeURIComponent(q)}&n=8`);
-      if (!res || !res.length) { box.innerHTML = '<div class="sr-item muted">sonuç yok</div>'; box.classList.remove('hidden'); return; }
+      if (!res || !res.length) { box.innerHTML = '<div class="sr-item muted" style="padding:16px 12px;text-align:center;justify-content:center">Eşleşen anı bulunamadı.</div>'; box.classList.remove('hidden'); return; }
       box.innerHTML = res.map(r => `
         <div class="sr-item" data-mem-id="${esc(r.id)}">
           <div class="sr-top"><span class="badge room" style="border-color:${roomMeta(r.oda).color}">${ico(roomMeta(r.oda).ico, 12)} ${esc(roomMeta(r.oda).label)}</span>
-            <span>${esc(r.konu)}</span><span class="sr-score">%${((r.score || 0) * 100).toFixed(0)}</span></div>
+            <span>${esc(r.konu)}</span><span class="sr-score">%${Math.round((r.score || 0) * 100)}</span></div>
           <div class="sr-body">${esc((r.content || '').slice(0, 160))}</div>
         </div>`).join('');
       box.classList.remove('hidden');

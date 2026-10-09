@@ -29,7 +29,8 @@ Notları ve anıları salt bir vektör listesine yığmak yerine, Loci Yöntemi 
 ## Temel Altyapı
 
 * **FastMCP:** Model Context Protocol standardında durumsuz köprü katmanı.
-* **ChromaDB:** Yerel vektör indeksi ve cosine benzerlik motoru.
+* **ChromaDB:** Yerel vektör indeksi ve kosinüs benzerlik motoru.
 * **SQLite WAL:** FTS5 tam metin araması, varlık-ilişki tablosu ve metadata kaydı.
+* **Hibrit Arama Motoru:** SQLite FTS5 (BM25) ve ChromaDB vektör aday havuzunu birleştiren, başlık öncelikli ve alaka eşikli füzyon mimarisi.
 * **Ollama:** Dinamik olarak değiştirilebilen ve anlık test edilebilen yerel çıkarım modelleri.
 * **Web Arayüzü:** Yapılandırma veya derleme aracı içermeyen, saf HTML5, CSS3, JavaScript ve D3.js v7 paneli.

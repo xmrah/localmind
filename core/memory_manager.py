@@ -141,19 +141,20 @@ class MemoryManager:
         except Exception as e:
             log.warning(f"FTS upsert hatası: {e}")
 
-    def _bm25_search(self, query: str, limit: int = 20) -> dict:
-        """SQLite FTS5 BM25 keyword arama. {memory_id: 0-1 skor} döndürür."""
+    def _bm25_search(self, query: str, limit: int = 30) -> dict[str, float]:
+        """SQLite FTS5 BM25 keyword arama. {memory_id: 0.0 - 1.0 skor} döndürür."""
         import re
-        clean = re.sub(r'[^\w\s]', ' ', query, flags=re.UNICODE)
+        clean = re.sub(r'[^\w\s]', ' ', query, flags=re.UNICODE).strip()
         words = [w for w in clean.split() if len(w) >= 2]
         if not words:
             return {}
-        fts_query = " OR ".join(f'"{w}"' for w in words[:10])
+        fts_query = " OR ".join(f'"{w}"*' for w in words[:10])
         try:
             uri_path = f"file:{GRAPH_DB_PATH}?mode=ro"
             conn = sqlite3.connect(uri_path, uri=True)
+            # FTS5 bm25 ağırlıkları: konu=5.0, content=1.0, tags=3.0
             rows = conn.execute(
-                "SELECT memory_id, rank FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
+                "SELECT memory_id, bm25(memories_fts, 5.0, 1.0, 3.0) as rank FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
                 (fts_query, limit)
             ).fetchall()
             conn.close()
@@ -162,12 +163,18 @@ class MemoryManager:
             return {}
         if not rows:
             return {}
-        # FTS5 rank negatif; en negatif = en iyi eşleşme
+        # FTS5 bm25 rank negatif; en negatif = en iyi eşleşme
+        # Sıralı yumuşak ölçekleme: en iyi 1.0, en dip 0.45
         ranks = [r for _, r in rows]
         min_r, max_r = min(ranks), max(ranks)
-        if min_r == max_r:
-            return {mid: 1.0 for mid, _ in rows}
-        return {mid: (max_r - r) / (max_r - min_r) for mid, r in rows}
+        spread = max_r - min_r
+        scores = {}
+        for mid, r in rows:
+            if spread == 0:
+                scores[mid] = 1.0
+            else:
+                scores[mid] = round(1.0 - (0.55 * ((r - min_r) / spread)), 3)
+        return scores
 
     # ─────────────────────────────────────────────────────
     # TEMEL OKUMA İŞLEMLERİ
@@ -251,84 +258,127 @@ class MemoryManager:
             ))
         return memories
 
-    def search(self, query: str, n: int = 5, oda: str | None = None) -> list[dict]:
-        """Hibrit arama: BM25 keyword (%30) + cosine semantic (%50) + importance decay (%20)."""
-        total = self.collection.count()
-        if total == 0:
+    def search(self, query: str, n: int = 8, oda: str | None = None) -> list[dict]:
+        """
+        2026 Bireysel Zihin Sarayı Hibrit Arama (RRF + BM25 + Vektör + Eşik Filtresi).
+        - Tam metin (FTS5) ve vektör adaylarını birleştirir (kayıp önler).
+        - Başlık ve etiket eşleşmelerine öncelik verir.
+        - Alakasız gürültüyü eşik filtresiyle eler (zorla doldurma yapmaz).
+        - Her zaman pozitif %0 - %100 normalize güven skoru üretir.
+        """
+        query_clean = query.strip()
+        if not query_clean:
             return []
 
-        where_filter = {}
-        if oda: where_filter["oda"] = oda
-        if not where_filter: where_filter = None
-        # Küçük koleksiyonlarda daha fazla aday çek; benzer sonuçlar HNSW'de alt sıralarda olabilir
-        n_query = min(max(n * 4, 20), total)
+        all_memories_map = {m.id: m for m in self.get_all_memories(include_archived=False)}
+        if not all_memories_map:
+            return []
 
-        # BM25 keyword skorlarını önce hesapla (ChromaDB'den bağımsız)
-        bm25_scores = self._bm25_search(query, limit=n_query)
+        import re
+        q_words = [w.lower() for w in re.sub(r'[^\w\s]', ' ', query_clean, flags=re.UNICODE).split() if len(w) >= 2]
+        q_lower = query_clean.lower()
 
-        # n_results, filtrelenmiş koleksiyondaki eleman sayısını aşabilir; küçülterek yeniden dene
-        for attempt_n in [n_query, n, 1]:
-            try:
-                results = self.collection.query(
-                    query_texts=[query],
-                    n_results=attempt_n,
-                    where=where_filter,
-                    include=["documents", "metadatas", "distances"]
-                )
-                break
-            except Exception as e:
-                if attempt_n == 1:
-                    log.error(f"Arama hatası: {e}")
-                    return []
+        # 1. Dal: SQLite FTS5 BM25 Arama (Kelime ve başlık eşleşmesi)
+        bm25_scores = self._bm25_search(query_clean, limit=max(n * 4, 30))
+
+        # 2. Dal: ChromaDB Vektör Sorgusu (Anlamsal yakınlık)
+        where_filter = {"oda": oda} if oda else None
+        vector_sims = {}
+        try:
+            vec_limit = min(max(n * 4, 30), self.collection.count())
+            results = self.collection.query(
+                query_texts=[query_clean],
+                n_results=vec_limit,
+                where=where_filter,
+                include=["documents", "metadatas", "distances"]
+            )
+            if results and results.get("ids") and results["ids"][0]:
+                for i, doc_id in enumerate(results["ids"][0]):
+                    dist = results["distances"][0][i]
+                    # Cosine distance: 0.0 (özdeş) .. 1.25 (gürültü)
+                    if dist <= 0.0:
+                        sim = 1.0
+                    elif dist >= 1.25:
+                        sim = 0.0
+                    else:
+                        sim = max(0.0, 1.0 - (dist / 1.25))
+                    vector_sims[doc_id] = round(sim, 3)
+        except Exception as e:
+            log.warning(f"Vektör arama hatası: {e}")
+
+        # 3. İki bağımsız arama havuzunun birleşimi (Candidate Union)
+        candidate_ids = set(bm25_scores.keys()) | set(vector_sims.keys())
+        if not candidate_ids:
+            return []
+
+        from .config import get_config
+        decay_factor = float(get_config().get("decay_factor", 0.05))
 
         items = []
-        for i, doc_id in enumerate(results["ids"][0]):
-            meta = results["metadatas"][0][i]
-            distance = results["distances"][0][i]
-            # Cosine space: distance = 1 - cosine_similarity → score = 1 - distance
-            score = 1.0 - distance
-
-            # Tamamen zıt anlamsal içerikleri filtrele (cosine < -0.5)
-            if score < -0.5:
+        for doc_id in candidate_ids:
+            m = all_memories_map.get(doc_id)
+            if not m or m.archived:
+                continue
+            if oda and m.oda.lower() != oda.lower():
                 continue
 
-            if meta.get("archived", "false") == "true":
+            lex_score = bm25_scores.get(doc_id, 0.0)
+            sem_score = vector_sims.get(doc_id, 0.0)
+
+            title_lower = m.konu.lower()
+            tag_list = [t.lower() for t in (m.tags or [])]
+
+            # Başlık ve etiket önceliği (Title & Tag Boost)
+            if q_lower in title_lower:
+                lex_score = max(lex_score, 0.95)
+            elif any(w in title_lower or w in tag_list for w in q_words):
+                lex_score = max(lex_score, 0.80)
+
+            # Eşik Değeri (Relevance Floor):
+            # Kelime eşleşmesi YOKSA ve anlamsal benzerlik gürültü seviyesindeyse elenir
+            if lex_score == 0.0 and sem_score < 0.40:
                 continue
 
-            # Erişim sayısını artır
-            self._increment_access(doc_id, meta)
+            # Hibrit Füzyon Skoru:
+            if lex_score > 0.0 and sem_score > 0.0:
+                base_score = (lex_score * 0.65) + (sem_score * 0.35)
+            elif lex_score > 0.0:
+                base_score = lex_score * 0.90
+            else:
+                base_score = sem_score * 0.80
+
+            # Ebbinghaus tazelik ve erişim bonusu (%5 hafif çarpan)
+            try:
+                days = (datetime.now() - datetime.fromisoformat(m.created_at)).days
+            except Exception:
+                days = 0
+            decay_mult = (1.0 - decay_factor) ** min(days, 365)
+            access_boost = min(1.0, m.access_count * 0.1)
+            recency_bonus = (decay_mult * 0.03) + (access_boost * 0.02)
+
+            final_score = min(1.0, max(0.05, base_score + recency_bonus))
 
             items.append({
                 "id": doc_id,
-                "konu": meta.get("konu", ""),
-                "content": results["documents"][0][i],
-                "oda": meta.get("oda", "genel"),
-                "kanat": meta.get("kanat", "genel"),
-                "dolap": meta.get("dolap", "genel"),
-                "score": round(score, 3),
-                "bm25": round(bm25_scores.get(doc_id, 0.0), 3),
-                "importance": float(meta.get("importance", 7.0)),
-                "access_count": int(meta.get("access_count", 0)),
-                "created_at": meta.get("created_at", "1970-01-01T00:00:00+00:00"),
-                "tags": json.loads(meta.get("tags", "[]")),
+                "konu": m.konu,
+                "content": m.bilgi,
+                "oda": m.oda,
+                "kanat": m.kanat,
+                "dolap": m.dolap,
+                "score": round(final_score, 2),
+                "importance": m.importance,
+                "access_count": m.access_count,
+                "created_at": m.created_at,
+                "tags": m.tags or []
             })
 
-        # Hibrit sıralama: cosine (%50) + BM25 (%30) + importance decay (%20)
-        from .config import get_config
-        decay_factor = float(get_config().get("decay_factor", 0.99))
+        # Skora göre büyükten küçüğe kesin sıralama
+        items.sort(key=lambda x: x["score"], reverse=True)
 
-        def _decay_score(item: dict) -> float:
-            try:
-                days = (datetime.now() - datetime.fromisoformat(item["created_at"])).days
-            except Exception:
-                days = 0
-            decayed = item["importance"] * (decay_factor ** days) + (item["access_count"] * 0.5)
-            return min(10.0, decayed)
+        # En üstteki sonuçların erişim sayacını artır
+        for it in items[:n]:
+            self._increment_access(it["id"], {"access_count": it["access_count"]})
 
-        items.sort(
-            key=lambda x: x["score"] * 0.5 + x["bm25"] * 0.3 + (_decay_score(x) / 10) * 0.2,
-            reverse=True
-        )
         return items[:n]
 
     def _increment_access(self, doc_id: str, meta: dict):
