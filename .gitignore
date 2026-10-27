@@ -17,3 +17,6 @@ exports/
 docs/llm_benchmarks/
 gemma*
 gemini*
+*.backup*
+chroma_db.backup*
+
